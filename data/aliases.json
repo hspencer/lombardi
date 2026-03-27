@@ -143,15 +143,6 @@
         "North Atlantic Treaty Organization"
       ]
     },
-    "onu": {
-      "canonical": "ONU",
-      "type": "Organization",
-      "aliases": [
-        "UN",
-        "United Nations",
-        "Naciones Unidas"
-      ]
-    },
     "gobierno-ucrania": {
       "canonical": "Gobierno de Ucrania",
       "type": "Organization",
@@ -283,7 +274,11 @@
     "chile": {
       "canonical": "Chile",
       "type": "Location",
-      "aliases": []
+      "aliases": [
+        "Chile",
+        "Cile",
+        "Chilito"
+      ]
     },
     "brasil": {
       "canonical": "Brasil",
@@ -364,6 +359,24 @@
         "el presidente de Rusia",
         "el Kremlin",
         "vladimir-putin"
+      ]
+    },
+    "greece": {
+      "canonical": "Grecia",
+      "type": "Location",
+      "aliases": [
+        "grecia"
+      ]
+    },
+    "organizacion-de-las-naciones-unidas": {
+      "canonical": "ONU",
+      "type": "Organization",
+      "aliases": [
+        "UN",
+        "United Nations",
+        "Naciones Unidas",
+        "onu",
+        "Organización de las Naciones Unidas"
       ]
     }
   }

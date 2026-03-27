@@ -4,6 +4,10 @@
   "description": "Triangulacion ontologica de fuentes de noticias globales",
   "scripts": {
     "fetch": "node backend/rss_fetcher.js",
+    "ingest": "node backend/ingest.js",
+    "resolve": "node backend/resolver.js",
+    "seed": "node backend/seed.js",
+    "serve": "node backend/api.js",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down"
   },

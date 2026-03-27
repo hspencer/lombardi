@@ -85,10 +85,22 @@ async function handleAPI(req, res) {
     if (url.pathname === '/api/ego') {
         let focalId = url.searchParams.get('id');
 
-        // Si no hay ID, elegir un Actor al azar
+        // Si no hay ID, mostrar el evento más reciente o un actor relevante
         if (!focalId) {
-            const random = await ageQuery("MATCH (a:Actor) RETURN a.id ORDER BY rand() LIMIT 1").catch(() => []);
-            focalId = random[0] || null;
+            // Primero intentar evento más reciente (por fecha)
+            const recentEvent = await ageQuery("MATCH (e:Evento) WHERE e.date IS NOT NULL RETURN e.id ORDER BY e.date DESC LIMIT 1").catch(() => []);
+            if (recentEvent.length) {
+                focalId = recentEvent[0];
+            } else {
+                // Fallback: actor con más conexiones
+                const topActor = await ageQuery("MATCH (a:Actor)-[r]-() RETURN a.id, count(r) as c ORDER BY c DESC LIMIT 1").catch(() => []);
+                focalId = topActor[0] || null;
+            }
+            if (!focalId) {
+                // Último fallback: cualquier actor
+                const any = await ageQuery("MATCH (a:Actor) RETURN a.id LIMIT 1").catch(() => []);
+                focalId = any[0] || null;
+            }
             if (!focalId) {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ focal: null, nodes: [], edges: [] }));
