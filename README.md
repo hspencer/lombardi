@@ -12,13 +12,14 @@ Es un visualizador de noticias, homenaje a [Mark Lombardi](https://en.wikipedia.
 
 ## Funcionalidades
 
+- **Vista panorama** — Landing con los 10 eventos más recientes y sus conexiones, timeline brushable con play
 - **Ingesta de noticias** — Feeds RSS configurables con toggle on/off por fuente
 - **Temas de interés** — Filtra el flujo noticioso por queries relevantes para el investigador
 - **Extracción ontológica** — LLMs locales (Ollama) extraen actores, eventos y relaciones
 - **Grafo de conocimiento** — Apache AGE (PostgreSQL + Cypher) como base
 - **Visualización egocéntrica** — Grafo navegable con foco dinámico y grados de separación
 - **Detección de contradicciones** — Identifica tensiones entre fuentes sobre un mismo evento
-- **Edición de nodos** — Tipos, aliases, merge, descripción, eliminación
+- **Edición de nodos** — Tipos, aliases, merge, descripción, eliminación, agregar relaciones
 - **Enriquecimiento** — Wikidata + Claude API (on-demand, streaming)
 - **Gestión de fuentes** — CRUD completo de feeds RSS y temas de interés
 - **i18n** — Español / English con detección automática
@@ -75,7 +76,8 @@ node backend/api.js              # http://localhost:3000
 │   └── seed.js             # Grafo de conocimiento base
 ├── frontend/
 │   ├── index.html          # UI principal
-│   ├── app.js              # Motor D3.js egocéntrico
+│   ├── app.js              # Motor D3.js egocéntrico + panorama
+│   ├── timeline.js         # Timeline brushable con play/animate
 │   ├── i18n.js             # ES/EN
 │   └── css/                # variables, layout, graph, detail
 ├── data/
@@ -102,9 +104,11 @@ Definida en [`data/schema.json`](data/schema.json):
 
 ## Interfaz
 
+- **Panorama:** Landing con eventos recientes, actores compartidos como puentes, timeline con play
 - **Vista Nodes:** Grafo de fuerza con colores por tipo
 - **Vista Titles:** Tipografía serif como nodos, collision de bounding box
-- **Panel de detalle:** Tipo editable, descripción, aliases, merge, noticias vinculadas, Wikidata
+- **Panel de detalle:** Tipo editable, descripción, aliases, merge, relaciones, noticias vinculadas, Wikidata
+- **Panel de fuentes:** Gestión de feeds RSS y temas de interés
 - **Breadcrumbs semánticos:** Aristas entre nodos navegados
 - **Buscador:** Autocompletado con dot de color
 - **i18n:** ES/EN con browser detect

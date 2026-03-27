@@ -26,7 +26,7 @@ cd lombardi
 npm install
 ```
 
-Esto instala: `fast-xml-parser`, `csv-parser`, `pg`.
+Esto instala: `fast-xml-parser`, `pg`.
 
 ## 3. Levantar Apache AGE (base de datos)
 
@@ -79,7 +79,7 @@ Esto carga ~50 entidades geopoliticas (presidentes, paises, organizaciones) con 
 node backend/rss_fetcher.js
 ```
 
-Lee los 31 feeds RSS de `data/sources/feeds.csv` y guarda los items en `data/raw_news/`.
+Lee los feeds RSS habilitados de `data/sources/feeds.json` y guarda los items en `data/raw_news/`. Solo descarga feeds con `enabled: true` y filtra por temas definidos en `data/sources/topics.json`.
 
 ## 7. Procesar noticias con Ollama
 
@@ -153,7 +153,8 @@ data/
 ├── aliases.json         # Diccionario de normalizacion de entidades
 ├── seed-knowledge.json  # Grafo base de sentido comun
 ├── sources/
-│   └── feeds.csv        # 31 feeds RSS curados
+│   ├── feeds.json       # Feeds RSS configurables (con enabled toggle)
+│   └── topics.json      # Temas de interés del usuario
 ├── raw_news/
 │   ├── *.json           # Noticias crudas (pendientes)
 │   ├── *.extraction.json # Output de Ollama (persistente)
@@ -175,9 +176,15 @@ Editar `data/schema.json`:
 }
 ```
 
-### Agregar feeds RSS
+### Gestionar feeds RSS
 
-Editar `data/sources/feeds.csv` y correr `node backend/rss_fetcher.js`.
+Desde la interfaz: pestaña **Fuentes** permite activar/desactivar feeds y agregar nuevos.
+Manualmente: editar `data/sources/feeds.json` y correr `node backend/rss_fetcher.js`.
+
+### Filtrar por temas de interés
+
+Desde la interfaz: pestaña **Fuentes** > sección "Temas de interés".
+Manualmente: editar `data/sources/topics.json`.
 
 ### Agregar entidades al seed
 

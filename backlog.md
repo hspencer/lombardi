@@ -1,6 +1,6 @@
 # Lombardi — Backlog
 
-Estado del proyecto al 2026-03-27.
+Estado del proyecto al 2026-03-28.
 
 ## Completado
 
@@ -54,6 +54,14 @@ Estado del proyecto al 2026-03-27.
 - [x] ~~Aristas semánticas: PARTICIPA (con rol), PERTENECE_A, UBICADO_EN~~ ✓
 - [x] ~~Búsqueda web de noticias frescas~~ — Google News RSS desde buscador + ingest on-demand.
 - [x] ~~Pestañas Noticias/Nodo en panel derecho~~ — Noticias como tab principal.
+- [x] ~~Gestión de fuentes~~ — Pestaña "Fuentes" con CRUD de feeds RSS (toggle on/off) y temas de interés (pills filtrantes). feeds.csv migrado a feeds.json.
+- [x] ~~Vista panorama~~ — Landing con 10 eventos recientes + actores + conexiones. Timeline brushable. Click en "Lombardi" vuelve al panorama.
+- [x] ~~Agregar relaciones desde UI~~ — Formulario en panel de detalle para crear aristas entre nodos.
+- [ ] **Reprocesar contextual por tipo de nodo** — El discover (`/api/node/discover`) debe especializar su estrategia según el tipo del nodo focal:
+  - **Evento**: leer el contenido de las noticias vinculadas y re-extraer actores/relaciones desde el texto. Actualmente solo mira el grafo, no vuelve al contenido original.
+  - **Persona**: revisar las noticias donde aparece para descubrir eventos en los que participó pero no fueron conectados en la ingesta original.
+  - **Organización**: inferir miembros, subsidiarias, personas clave, sede (ya parcialmente implementado con fase generativa LLM).
+  - **Location**: encontrar entidades ubicadas ahí y eventos ocurridos en ese lugar.
 - [ ] **Resolver de contradicciones** — Usar qwen3.5 para detectar CONTRADICE entre eventos del mismo hecho. Genera aristas con `tension_score`.
 - [ ] **Reprocesamiento de noticias** — Separar ingesta (RSS→JSON) de procesamiento (JSON→extracción→grafo). Poder reprocesar con nuevo prompt/modelo sin re-ingestar.
 - [ ] **i18n de nodos** — Guardar `name_es` y `name_en` por nodo para que los títulos cambien con el idioma de la interfaz.
@@ -106,7 +114,7 @@ El usuario no consume una lista; habita un nodo. El cambio de foco reconfigura l
 - [x] ~~README actualizado~~ ✓
 - [x] ~~Commit inicial limpio~~ ✓
 - [x] ~~Breadcrumbs semanticos~~ ✓
-- [ ] **Filtros en el grafo** — Por tipo de evento, fuente, fecha.
+- [ ] **Filtros en el grafo** — Por tipo de evento, fuente, fecha. (Timeline parcialmente implementado).
 - [ ] **Export PNG del grafo** — Boton para descargar vista actual.
 - [ ] **3D mode** — Vista Three.js alternativa (como constel-db).
 - [ ] **Deteccion de clusters** — Agrupar visualmente nodos por tema/region.

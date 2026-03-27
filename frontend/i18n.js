@@ -65,6 +65,12 @@ const TRANSLATIONS = {
         'detail.link': 'Link',
         'detail.status': 'Estado',
         'detail.delete.confirm': '¿Eliminar nodo',
+        'detail.addRelation': 'Agregar relación',
+        'detail.targetNode': 'Nodo',
+        'detail.searchNode': 'Buscar nodo...',
+        'detail.relationType': 'Tipo',
+        'detail.role': 'Rol',
+        'detail.selectNode': 'Selecciona un nodo primero',
 
         // Ingest
         'ingest.pending': 'pendientes',
@@ -198,6 +204,12 @@ const TRANSLATIONS = {
         'detail.link': 'Link',
         'detail.status': 'Status',
         'detail.delete.confirm': 'Delete node',
+        'detail.addRelation': 'Add relation',
+        'detail.targetNode': 'Node',
+        'detail.searchNode': 'Search node...',
+        'detail.relationType': 'Type',
+        'detail.role': 'Role',
+        'detail.selectNode': 'Select a node first',
 
         'ingest.pending': 'pending',
         'ingest.hint': 'news in the corpus mention this node but have not been processed yet.',

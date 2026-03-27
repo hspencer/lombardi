@@ -1007,6 +1007,74 @@
     font-weight: 600;
 }
 
+/* --- Add Relation Form --- */
+.add-relation-row {
+    margin-top: var(--space-sm);
+    padding-top: var(--space-sm);
+    border-top: 1px solid var(--border-default);
+}
+.add-relation-form {
+    margin-top: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--bg-surface-alt);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+}
+.add-relation-form[hidden] { display: none; }
+.relation-field {
+    margin-bottom: var(--space-sm);
+}
+.relation-field-row {
+    display: flex;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+.relation-label {
+    display: block;
+    font-size: var(--font-size-xs);
+    font-family: var(--font-sans);
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+}
+.relation-search-wrap {
+    position: relative;
+}
+.relation-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-active);
+    border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+}
+.relation-search-results[hidden] { display: none; }
+.relation-search-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px var(--space-sm);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-default);
+}
+.relation-search-item:hover {
+    background: var(--bg-surface-alt);
+}
+.relation-search-item .conn-edge-tag {
+    margin-left: auto;
+}
+.relation-actions {
+    display: flex;
+    gap: var(--space-sm);
+}
+
 /* --- Sources panel --- */
 .sources-panel {
     padding: var(--space-md);
