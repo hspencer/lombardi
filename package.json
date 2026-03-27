@@ -1,6 +1,6 @@
 {
   "name": "lombardi",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Triangulacion ontológica de fuentes de noticias globales",
   "scripts": {
     "fetch": "node backend/rss_fetcher.js",

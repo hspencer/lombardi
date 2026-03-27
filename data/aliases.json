@@ -409,6 +409,21 @@
       "canonical": "Pentágono",
       "type": "Organization",
       "aliases": []
+    },
+    "trump-admin": {
+      "canonical": "Administración Trump",
+      "type": "Organization",
+      "aliases": [
+        "trump-administration"
+      ]
+    },
+    "empresas-ia": {
+      "canonical": "Empresas de inteligencia artificial",
+      "type": "Organization",
+      "aliases": [
+        "Empresas de IA",
+        "Big tech"
+      ]
     }
   }
 }

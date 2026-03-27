@@ -4,6 +4,8 @@ let simulation = null;
 let currentSimulation = null; // alias for applyDegreeFilter
 let svg, g, linkGroup, nodeGroup;
 let focalId = null;
+let focalIds = new Set(); // panorama mode: multiple focal events
+let panoramaMode = false;
 let history = []; // breadcrumbs
 let currentView = 'titles'; // 'nodes' | 'titles'
 let currentDegree = 1;
@@ -27,7 +29,8 @@ const LABEL_COLORS = {
 };
 
 const BASE_RADIUS = { Actor: 8, Evento: 8, Afirmacion: 4, Noticia: 3 };
-const MAX_LABEL_LEN = 20;
+const MAX_LABEL_LEN = 30;
+const MAX_LABEL_LINE = 16; // chars per line for multiline wrapping
 
 // Trim trailing " - Source Name" from news titles
 function trimTitle(title) {
@@ -116,6 +119,19 @@ function applyStaticI18n() {
     // Tabs
     document.getElementById('tabFeed').textContent = t('tab.feed');
     document.getElementById('tabNode').textContent = t('tab.node');
+    document.getElementById('tabSources').textContent = t('tab.sources');
+    // Sources panel
+    document.getElementById('sourcesFeedsTitle').textContent = t('sources.feeds');
+    document.getElementById('sourcesTopicsTitle').textContent = t('sources.topics');
+    document.getElementById('sourcesTopicsHint').textContent = t('sources.topicsHint');
+    document.getElementById('addFeedLabel').textContent = t('sources.addFeed');
+    document.getElementById('newFeedName').placeholder = t('sources.feedName');
+    document.getElementById('newFeedUrl').placeholder = t('sources.feedUrl');
+    document.getElementById('newFeedLang').placeholder = t('sources.feedLang');
+    document.getElementById('newFeedRegion').placeholder = t('sources.feedRegion');
+    document.getElementById('saveFeedLabel').textContent = t('sources.add');
+    document.getElementById('cancelFeedLabel').textContent = t('sources.cancel');
+    document.getElementById('topicInput').placeholder = t('sources.addTopic');
     // Feed
     document.getElementById('feedSortDate').textContent = t('feed.sort.date');
     document.getElementById('feedSortRelevance').textContent = t('feed.sort.relevance');
@@ -163,61 +179,97 @@ function setDegree(deg) {
     currentDegree = deg;
     document.getElementById('degreeValue').textContent = deg;
     if (lastEgoData) {
-        if (currentView === 'titles') {
-            // Titles mode: re-render with new degree
-            renderTitles(lastEgoData);
-        } else {
-            applyDegreeFilter(deg);
-        }
+        applyVisibilityFilter();
+        // Update timeline range for new degree
+        if (typeof Timeline !== 'undefined') Timeline.update(lastEgoData);
     }
 }
 
 function applyDegreeFilter(deg) {
-    if (!lastEgoData || !currentSimulation) return;
+    applyVisibilityFilter();
+}
 
-    const svg = d3.select('#graph');
+/* Composed visibility filter: degree + timeline date range.
+   Works for both 'nodes' and 'titles' views via opacity transitions. */
+function applyVisibilityFilter() {
+    if (!lastEgoData) return;
+
+    const svgSel = d3.select('#graph');
     const allNodes = lastEgoData.nodes;
-    const allEdges = lastEgoData.edges;
 
-    // Filter nodes by degree
-    const visibleNodes = allNodes.filter(n => (n._degree || 0) <= deg);
-    const visibleIds = new Set(visibleNodes.map(n => n.id));
-    const visibleEdges = allEdges.filter(e => visibleIds.has(e.source?.id || e.source) && visibleIds.has(e.target?.id || e.target));
+    // 1. Degree filter
+    const degreePassIds = new Set(
+        allNodes.filter(n => (n._degree || 0) <= currentDegree).map(n => n.id)
+    );
 
-    // Update node visibility with transition
-    svg.selectAll('.ego-node')
-        .transition().duration(300)
-        .style('opacity', function(d) {
-            return visibleIds.has(d.id) ? (d._degree === 0 ? 1 : d._degree === 1 ? 1 : 0.4) : 0;
-        })
-        .style('pointer-events', function(d) {
-            return visibleIds.has(d.id) ? 'all' : 'none';
-        });
+    // 2. Date filter (from Timeline module)
+    const dateFilter = (typeof Timeline !== 'undefined') ? Timeline.getVisibleDateIds() : null;
 
-    // Update edge visibility with transition
-    svg.selectAll('.ego-edge')
-        .transition().duration(300)
-        .style('opacity', function(d) {
-            const sid = d.source?.id || d.source;
-            const tid = d.target?.id || d.target;
-            return visibleIds.has(sid) && visibleIds.has(tid) ? 0.6 : 0;
-        });
+    // 3. Compose: node visible if passes BOTH filters
+    const visibleIds = new Set();
+    for (const n of allNodes) {
+        if (!degreePassIds.has(n.id)) continue;
+        // Date filter only applies to Evento nodes with real dates
+        if (dateFilter && n.label === 'Evento' && n.date && n.date !== 'null' && !dateFilter.has(n.id)) continue;
+        visibleIds.add(n.id);
+    }
 
-    // Update labels visibility
-    svg.selectAll('.ego-label')
-        .transition().duration(300)
-        .style('opacity', function(d) {
-            if (!visibleIds.has(d.id)) return 0;
-            if (d._degree <= 1) return 1;
-            return 0; // degree 2+ labels hidden (show on hover)
-        });
+    if (currentView === 'nodes') {
+        // Nodes view: transition .ego-node, .ego-edge, .ego-label
+        svgSel.selectAll('.ego-node')
+            .transition().duration(300)
+            .style('opacity', d => visibleIds.has(d.id) ? (d._degree <= 1 ? 1 : 0.4) : 0)
+            .style('pointer-events', d => visibleIds.has(d.id) ? 'all' : 'none');
+
+        svgSel.selectAll('.ego-edge')
+            .transition().duration(300)
+            .style('opacity', d => {
+                const sid = d.source?.id || d.source;
+                const tid = d.target?.id || d.target;
+                return visibleIds.has(sid) && visibleIds.has(tid) ? 0.6 : 0;
+            });
+
+        svgSel.selectAll('.ego-label')
+            .transition().duration(300)
+            .style('opacity', d => {
+                if (!visibleIds.has(d.id)) return 0;
+                return d._degree <= 1 ? 1 : 0;
+            });
+    } else {
+        // Titles view: transition nodeGroup children (g elements with data)
+        if (nodeGroup) {
+            nodeGroup.selectAll('g')
+                .transition().duration(300)
+                .attr('visibility', d => visibleIds.has(d.id) ? 'visible' : 'hidden')
+                .style('opacity', d => visibleIds.has(d.id) ? 1 : 0);
+        }
+    }
 }
 
 async function navigateTo(id, resetBreadcrumb) {
+    // Panorama mode: show recent events landscape
+    if (id === null) {
+        panoramaMode = true;
+        focalId = null;
+        focalIds = new Set();
+        history = [];
+        renderBreadcrumbs();
+        const pRes = await fetch(`${API}/api/panorama?limit=10`);
+        const pData = await pRes.json();
+        if (!pData.nodes || !pData.nodes.length) return;
+        focalIds = new Set(pData.focalIds || []);
+        lastEgoData = pData;
+        renderTitles(pData);
+        return;
+    }
+
+    // Exit panorama on specific node navigation
+    panoramaMode = false;
+    focalIds = new Set();
+
     const previousFocalId = focalId;
-    // Always fetch max degree (3), filter on client
-    const base = id ? `${API}/api/ego?id=${encodeURIComponent(id)}` : `${API}/api/ego`;
-    const url = `${base}${base.includes('?') ? '&' : '?'}degree=3`;
+    const base = `${API}/api/ego?id=${encodeURIComponent(id)}`;
+    const url = `${base}&degree=3`;
     const res = await fetch(url);
     const data = await res.json();
 
@@ -340,8 +392,8 @@ function renderEgo(data) {
         .attr('fill', 'none')
         .attr('opacity', d => {
             if (d.source === focalId || d.target === focalId ||
-                d.source?.id === focalId || d.target?.id === focalId) return 0.7;
-            return 0.15;
+                d.source?.id === focalId || d.target?.id === focalId) return 0.4;
+            return 0.08;
         });
 
     // Invisible fat path for hover
@@ -351,15 +403,20 @@ function renderEgo(data) {
         .attr('fill', 'none')
         .attr('cursor', 'pointer');
 
-    // Edge label (shown on hover)
+    // Edge label (visible on focal edges, shown on hover for others)
     const edgeLabel = linkG.append('text')
         .text(d => d.type.replace(/_/g, ' ').toLowerCase())
-        .attr('font-size', 8)
-        .attr('font-family', 'var(--font-mono)')
+        .attr('font-size', 10)
+        .attr('font-family', 'var(--font-sans)')
+        .attr('font-style', 'italic')
         .attr('fill', d => edgeVisual(d.type).color)
         .attr('text-anchor', 'middle')
-        .attr('dy', -5)
-        .attr('opacity', 0)
+        .attr('dy', -6)
+        .attr('opacity', d => {
+            const src = typeof d.source === 'object' ? d.source.id : d.source;
+            const tgt = typeof d.target === 'object' ? d.target.id : d.target;
+            return (src === focalId || tgt === focalId) ? 0.6 : 0;
+        })
         .attr('pointer-events', 'none');
 
     // Hover on edges
@@ -369,12 +426,12 @@ function renderEgo(data) {
             .attr('stroke-width', edgeVisual(d.type).width + 2)
             .attr('opacity', 1);
     }).on('mouseleave', function (e, d) {
-        d3.select(this).select('text').attr('opacity', 0);
         const isFocal = (typeof d.source === 'object' ? d.source.id : d.source) === focalId ||
                          (typeof d.target === 'object' ? d.target.id : d.target) === focalId;
+        d3.select(this).select('text').attr('opacity', isFocal ? 0.6 : 0);
         d3.select(this).select('path:first-child')
             .attr('stroke-width', edgeVisual(d.type).width)
-            .attr('opacity', isFocal ? 0.7 : 0.15);
+            .attr('opacity', isFocal ? 0.4 : 0.08);
     });
 
     // Curve generator helper
@@ -436,16 +493,50 @@ function renderEgo(data) {
     // --- Label layer (separate group, always on top) ---
     const labelGroup = g.append('g');
     const labelNodes = nodes.filter(n => n._degree <= 1 && (n.label === 'Actor' || n.label === 'Evento'));
-    labelGroup.selectAll('text')
+
+    // Wrap label text into lines of MAX_LABEL_LINE chars
+    function wrapLines(text, maxLen) {
+        if (!text) return [''];
+        text = text.length > MAX_LABEL_LEN ? text.slice(0, MAX_LABEL_LEN - 1) + '\u2026' : text;
+        text = text.toUpperCase();
+        if (text.length <= maxLen) return [text];
+        const words = text.split(/\s+/);
+        const lines = [];
+        let line = '';
+        for (const w of words) {
+            if (line && (line + ' ' + w).length > maxLen) {
+                lines.push(line);
+                line = w;
+            } else {
+                line = line ? line + ' ' + w : w;
+            }
+        }
+        if (line) lines.push(line);
+        return lines.length ? lines : [text];
+    }
+
+    const labels = labelGroup.selectAll('text')
         .data(labelNodes, d => d.id)
         .join('text')
-        .text(d => truncLabel(d.name || d.id).toUpperCase())
         .attr('font-family', 'Alegreya Sans, system-ui, sans-serif')
         .attr('font-size', d => d.id === focalId ? 12 : 9)
         .attr('font-weight', d => d.id === focalId ? 700 : 500)
         .attr('fill', d => graphLabelColor(d))
         .attr('text-anchor', 'middle')
         .attr('pointer-events', 'none');
+
+    labels.each(function(d) {
+        const el = d3.select(this);
+        const lines = wrapLines(d.name || d.id, MAX_LABEL_LINE);
+        el.selectAll('tspan').remove();
+        lines.forEach((line, i) => {
+            el.append('tspan')
+                .attr('x', 0)
+                .attr('dy', i === 0 ? 0 : '1.15em')
+                .text(line);
+        });
+        d._labelLines = lines.length;
+    });
 
     // Tooltip for degree 2 (no permanent label)
     let tooltip = document.querySelector('.graph-tooltip');
@@ -457,8 +548,10 @@ function renderEgo(data) {
 
     node.on('mouseenter', function (e, d) {
         const name = d.name || d.predicate || d.title || d.id;
-        const desc = d.description ? ` — ${d.description}` : '';
-        tooltip.innerHTML = desc ? `<strong>${name}</strong><br><span class="tooltip-desc">${desc}</span>` : `<strong>${name}</strong>`;
+        const desc = d.description ? `<span class="tooltip-desc">${d.description}</span>` : '';
+        const dateStr = (d.label === 'Evento' && d.date && d.date !== 'null' && d.date !== '')
+            ? `<span class="tooltip-date">${d.date}</span>` : '';
+        tooltip.innerHTML = `<strong>${name}</strong>${dateStr}${desc ? '<br>' + desc : ''}`;
         tooltip.classList.add('visible');
 
         // Reveal degree-2 neighbors of this node
@@ -494,10 +587,22 @@ function renderEgo(data) {
                 return 0.12;
             });
     })
-    .on('mousemove', e => {
-        const rect = container.getBoundingClientRect();
-        tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
-        tooltip.style.top = (e.clientY - rect.top - 8) + 'px';
+    .on('mousemove', function(e, d) {
+        // Position tooltip centered above the node
+        const containerRect = container.getBoundingClientRect();
+        const svgEl = document.getElementById('graph');
+        const pt = svgEl.createSVGPoint();
+        pt.x = d.x; pt.y = d.y;
+        const ctm = g.node().getCTM();
+        if (ctm) {
+            const screenPt = pt.matrixTransform(ctm);
+            const nx = screenPt.x - containerRect.left;
+            const ny = screenPt.y - containerRect.top;
+            const r = nodeRadius(d);
+            const tw = tooltip.offsetWidth || 120;
+            tooltip.style.left = (nx - tw / 2) + 'px';
+            tooltip.style.top = (ny - r * 2 - tooltip.offsetHeight - 8) + 'px';
+        }
     })
     .on('mouseleave', () => {
         tooltip.classList.remove('visible');
@@ -508,8 +613,8 @@ function renderEgo(data) {
             const src = typeof d.source === 'object' ? d.source.id : d.source;
             const tgt = typeof d.target === 'object' ? d.target.id : d.target;
             const isFocal = (src === focalId || tgt === focalId);
-            d3.select(this).select('path:first-child').attr('opacity', isFocal ? 0.7 : 0.15);
-            d3.select(this).select('text').attr('opacity', 0);
+            d3.select(this).select('path:first-child').attr('opacity', isFocal ? 0.4 : 0.08);
+            d3.select(this).select('text').attr('opacity', isFocal ? 0.6 : 0);
         });
         node.select('circle:not(.node-disputed-halo)')
             .attr('opacity', d => d._degree > currentDegree ? 0.15 : 1.0);
@@ -572,7 +677,9 @@ function renderEgo(data) {
             node.attr('transform', d => `translate(${d.x},${d.y})`);
             labelGroup.selectAll('text')
                 .attr('x', d => d.x)
-                .attr('y', d => d.y + nodeRadius(d) + 13);
+                .attr('y', d => d.y + nodeRadius(d) + 13)
+                .selectAll('tspan')
+                .attr('x', function() { return d3.select(this.parentNode).attr('x'); });
         });
 
     // Auto-zoom to fit degree 1
@@ -583,6 +690,9 @@ function renderEgo(data) {
     // Also after 2 seconds for fast stabilization
     currentSimulation = simulation;
     setTimeout(() => autoZoom(nodes, zoomBehavior, width, height), 2000);
+
+    // Update timeline slider
+    if (typeof Timeline !== 'undefined') Timeline.update(data);
 }
 
 function autoZoom(nodes, zoomBehavior, width, height) {
@@ -672,18 +782,28 @@ function renderTitles(data) {
     });
     nodes.forEach(n => { n._connectionCount = connCount[n.id] || 0; });
 
-    // Show nodes up to current degree
-    const visibleNodes = nodes.filter(n => n._degree <= currentDegree);
+    // Show nodes up to current degree + date filter
+    const dateFilter = (typeof Timeline !== 'undefined') ? Timeline.getVisibleDateIds() : null;
+    const visibleNodes = nodes.filter(n => {
+        if (n._degree > currentDegree) return false;
+        if (dateFilter && n.label === 'Evento' && n.date && n.date !== 'null' && !dateFilter.has(n.id)) return false;
+        return true;
+    });
 
-    // Pin focal
-    const focalNode = nodes.find(n => n.id === focalId);
-    if (focalNode) { focalNode.fx = cx; focalNode.fy = cy; }
+    // Pin focal (skip in panorama — all nodes float free)
+    const isFocal = panoramaMode ? (id => focalIds.has(id)) : (id => id === focalId);
+    if (!panoramaMode) {
+        const focalNode = nodes.find(n => n.id === focalId);
+        if (focalNode) { focalNode.fx = cx; focalNode.fy = cy; }
+    }
 
-    // --- Links ---
+    // --- Links with edge labels ---
     linkGroup = g.append('g');
-    const link = linkGroup.selectAll('path')
+    const linkG_t = linkGroup.selectAll('g')
         .data(edges)
-        .join('path')
+        .join('g');
+
+    const link = linkG_t.append('path')
         .attr('stroke', d => edgeVisual(d.type).color)
         .attr('stroke-width', d => Math.max(edgeVisual(d.type).width * 0.7, 0.5))
         .attr('stroke-dasharray', d => edgeVisual(d.type).style === 'dashed' ? '4,3' : null)
@@ -692,8 +812,24 @@ function renderTitles(data) {
         .attr('opacity', d => {
             const s = typeof d.source === 'object' ? d.source.id : d.source;
             const t = typeof d.target === 'object' ? d.target.id : d.target;
-            return (s === focalId || t === focalId) ? 0.5 : 0.12;
+            return (isFocal(s) || isFocal(t)) ? 0.35 : 0.08;
         });
+
+    // Edge labels for focal edges
+    const edgeLabel_t = linkG_t.append('text')
+        .text(d => d.type.replace(/_/g, ' ').toLowerCase())
+        .attr('font-size', 9)
+        .attr('font-family', 'var(--font-sans)')
+        .attr('font-style', 'italic')
+        .attr('fill', d => edgeVisual(d.type).color)
+        .attr('text-anchor', 'middle')
+        .attr('dy', -4)
+        .attr('opacity', d => {
+            const s = typeof d.source === 'object' ? d.source.id : d.source;
+            const t = typeof d.target === 'object' ? d.target.id : d.target;
+            return (isFocal(s) || isFocal(t)) ? 0.5 : 0;
+        })
+        .attr('pointer-events', 'none');
 
     // --- Layers: bg (diffuse backdrops) then text nodes ---
     const bgGroup = g.append('g').attr('class', 'title-bg-layer');
@@ -705,7 +841,7 @@ function renderTitles(data) {
         .attr('visibility', d => d._degree <= currentDegree ? 'visible' : 'hidden')
         .on('click', (e, d) => {
             e.stopPropagation();
-            if (d.id === focalId) return;
+            if (!panoramaMode && d.id === focalId) return;
             if (d.label === 'Actor' || d.label === 'Evento') {
                 navigateTo(d.id);
             } else {
@@ -745,22 +881,26 @@ function renderTitles(data) {
         .attr('font-size', d => {
             const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
             const base = style.fontSize;
-            if (d.id === focalId) return base + 6;
+            if (isFocal(d.id)) return base + 6;
             return base + Math.min(d._connectionCount * 0.3, 4);
         })
-        .attr('font-weight', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontWeight)
+        .attr('font-weight', d => {
+            // In panorama, bold actors connected to 2+ events (bridge nodes)
+            if (panoramaMode && d.label === 'Actor' && d._connectionCount >= 2) return 700;
+            return (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontWeight;
+        })
         .attr('font-style', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontStyle)
         .attr('font-family', d => {
             const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
             return style.font === 'serif' ? 'Alegreya, Georgia, serif' : 'Alegreya Sans, system-ui, sans-serif';
         })
         .attr('fill', d => {
-            if (d.id === focalId) return themeVar('--graph-label-focal');
+            if (isFocal(d.id)) return themeVar('--graph-label-focal');
             return nodeColor(d);
         })
         .attr('text-anchor', 'start')
         .attr('dominant-baseline', 'central')
-        .attr('opacity', d => d._degree === 2 ? 0.15 : (d.id === focalId ? 1 : 0.85));
+        .attr('opacity', d => d._degree === 2 ? 0.15 : (isFocal(d.id) ? 1 : 0.85));
 
     // Add multi-line tspan wrapping
     textEl.each(function(d) {
@@ -826,18 +966,37 @@ function renderTitles(data) {
         .attr('height', d => (d._bboxH || 14) + 8)
         .attr('pointer-events', 'none');
 
-    // Tooltip on hover
-    let tooltip = document.querySelector('.graph-tooltip');
-    if (!tooltip) {
-        tooltip = document.createElement('div');
-        tooltip.className = 'graph-tooltip';
-        container.appendChild(tooltip);
+    // Tooltip — shows date for events, positioned top-left of the text box
+    let tooltip_t = document.querySelector('.graph-tooltip');
+    if (!tooltip_t) {
+        tooltip_t = document.createElement('div');
+        tooltip_t.className = 'graph-tooltip';
+        container.appendChild(tooltip_t);
     }
 
     node.on('mouseenter', function(e, d) {
-        const desc = d.description ? ` — ${d.description}` : '';
-        tooltip.textContent = `${d.name || d.id}${desc}`;
-        tooltip.classList.add('visible');
+        // Build tooltip content: date for events, description if available
+        const hasDate = d.label === 'Evento' && d.date && d.date !== 'null' && d.date !== '';
+        const hasDesc = d.description && d.description.length > 0;
+        if (hasDate || hasDesc) {
+            let html = '';
+            if (hasDate) html += `<span class="tooltip-date" style="margin-left:0">${d.date}</span>`;
+            if (hasDesc) html += `${hasDate ? '<br>' : ''}<span class="tooltip-desc">${d.description}</span>`;
+            tooltip_t.innerHTML = html;
+            tooltip_t.classList.add('visible');
+
+            // Position top-left of the text bounding box
+            const containerRect = container.getBoundingClientRect();
+            const svgEl = document.getElementById('graph');
+            const pt = svgEl.createSVGPoint();
+            pt.x = d.x; pt.y = d.y - (d._bboxH || 14) / 2;
+            const ctm = g.node().getCTM();
+            if (ctm) {
+                const sp = pt.matrixTransform(ctm);
+                tooltip_t.style.left = (sp.x - containerRect.left) + 'px';
+                tooltip_t.style.top = (sp.y - containerRect.top - tooltip_t.offsetHeight - 6) + 'px';
+            }
+        }
 
         // Highlight connections
         const connIds = new Set();
@@ -858,26 +1017,35 @@ function renderTitles(data) {
             const t = typeof l.target === 'object' ? l.target.id : l.target;
             return (s === d.id || t === d.id) ? 0.8 : 0.04;
         });
-    })
-    .on('mousemove', e => {
-        const rect = container.getBoundingClientRect();
-        tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
-        tooltip.style.top = (e.clientY - rect.top - 8) + 'px';
+        // Show edge labels for hovered node's connections
+        edgeLabel_t.attr('opacity', l => {
+            const s = typeof l.source === 'object' ? l.source.id : l.source;
+            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            return (s === d.id || t === d.id) ? 0.7 : 0;
+        });
     })
     .on('mouseleave', () => {
-        tooltip.classList.remove('visible');
+        tooltip_t.classList.remove('visible');
         textEl.attr('opacity', d => d._degree === 2 ? 0.15 : (d.id === focalId ? 1 : 0.85));
         link.attr('opacity', d => {
             const s = typeof d.source === 'object' ? d.source.id : d.source;
             const t = typeof d.target === 'object' ? d.target.id : d.target;
-            return (s === focalId || t === focalId) ? 0.5 : 0.12;
+            return (s === focalId || t === focalId) ? 0.35 : 0.08;
+        });
+        edgeLabel_t.attr('opacity', d => {
+            const s = typeof d.source === 'object' ? d.source.id : d.source;
+            const t = typeof d.target === 'object' ? d.target.id : d.target;
+            return (s === focalId || t === focalId) ? 0.5 : 0;
         });
     });
 
     // Rectangular collision force (accounts for text-anchor offset)
+    const COLLISION_PADDING = 6; // extra px between labels
     function forceRectCollide() {
         let nds;
         function force(alpha) {
+            // Run 3 iterations per tick for better convergence
+            for (let iter = 0; iter < 3; iter++) {
             for (let i = 0; i < nds.length; i++) {
                 for (let j = i + 1; j < nds.length; j++) {
                     const a = nds[i], b = nds[j];
@@ -886,12 +1054,13 @@ function renderTitles(data) {
                     const ax = a.x + (a._bboxOffsetX || 0);
                     const bx = b.x + (b._bboxOffsetX || 0);
                     const dx = bx - ax, dy = b.y - a.y;
-                    const minDistX = (a._w + b._w) / 2;
-                    const minDistY = (a._h + b._h) / 2;
+                    const minDistX = (a._w + b._w) / 2 + COLLISION_PADDING;
+                    const minDistY = (a._h + b._h) / 2 + COLLISION_PADDING;
                     const overlapX = minDistX - Math.abs(dx);
                     const overlapY = minDistY - Math.abs(dy);
                     if (overlapX > 0 && overlapY > 0) {
-                        const push = alpha * 0.5;
+                        // Stronger push: use max(alpha, 0.3) to keep resolving even late
+                        const push = Math.max(alpha, 0.3) * 0.8;
                         if (overlapX < overlapY) {
                             const sx = (dx > 0 ? 1 : -1) * overlapX * push;
                             a.x -= sx; b.x += sx;
@@ -902,6 +1071,7 @@ function renderTitles(data) {
                     }
                 }
             }
+            } // end iter loop
         }
         force.initialize = function(nodes) { nds = nodes; };
         return force;
@@ -919,15 +1089,17 @@ function renderTitles(data) {
         return `M${sx},${sy} Q${mx},${my} ${tx},${ty}`;
     }
 
-    // Simulation
+    // Simulation — slower alpha decay for better collision resolution
     simulation = d3.forceSimulation(nodes)
+        .alphaDecay(0.015)
+        .velocityDecay(0.35)
         .force('link', d3.forceLink(edges).id(d => d.id)
-            .distance(d => (edgeVisual(d.type).force_distance || 100) * 1.2)
-            .strength(0.3))
-        .force('charge', d3.forceManyBody().strength(-150))
-        .force('center', d3.forceCenter(cx, cy).strength(0.03))
+            .distance(d => (edgeVisual(d.type).force_distance || 100) * (panoramaMode ? 0.8 : 1.4))
+            .strength(panoramaMode ? 0.5 : 0.25))
+        .force('charge', d3.forceManyBody().strength(panoramaMode ? -80 : -200))
+        .force('center', d3.forceCenter(cx, cy).strength(panoramaMode ? 0.2 : 0.03))
         .force('rectCollide', forceRectCollide())
-        .force('type-radial', alpha => {
+        .force('type-radial', panoramaMode ? null : (alpha => {
             nodes.forEach(n => {
                 if (n.id === focalId || n._degree > 1) return;
                 const angle = TYPE_ANGLE[n.type] ?? 0;
@@ -935,9 +1107,12 @@ function renderTitles(data) {
                 n.vx += (cx + Math.cos(angle) * r - n.x) * alpha * 0.015;
                 n.vy += (cy + Math.sin(angle) * r - n.y) * alpha * 0.015;
             });
-        })
+        }))
         .on('tick', () => {
             link.attr('d', titleLinkPath);
+            edgeLabel_t
+                .attr('x', d => (d.source.x + d.target.x) / 2)
+                .attr('y', d => (d.source.y + d.target.y) / 2);
             node.attr('transform', d => `translate(${d.x},${d.y})`);
             bgGroup.selectAll('rect')
                 .attr('x', d => d.x - 8)
@@ -945,6 +1120,9 @@ function renderTitles(data) {
         });
 
     setTimeout(() => autoZoom(nodes, d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform)), width, height), 2000);
+
+    // Update timeline slider
+    if (typeof Timeline !== 'undefined') Timeline.update(data);
 }
 
 function makeDrag() {
@@ -1027,7 +1205,7 @@ function renderDetail(node) {
             <select id="nodeTypeSelect" class="node-type-select" onchange="updateNodeType('${node.id}', this.value, 'event_type')">
                 ${eventTypes.map(et => `<option value="${et}" ${et === node.event_type ? 'selected' : ''}>${et.replace(/_/g, ' ')}</option>`).join('')}
             </select>
-            ${node.date ? `<span class="event-date-badge">${node.date}</span>` : ''}
+            ${node.date && node.date !== 'null' && node.date !== '' ? `<span class="event-date-badge">${node.date}</span>` : ''}
             ${node.is_disputed ? `<span class="disputed-badge">${t('detail.disputed')}</span>` : ''}
         </div>`;
     } else {
@@ -1166,8 +1344,133 @@ function renderConnections(node) {
         html += `</div>`;
     }
 
-    html += `</div></div>`;
+    html += `</div>`;
+
+    // Add Relation button and form
+    html += `<div class="add-relation-row">
+        <button class="action-btn" onclick="toggleAddRelation('${node.id}')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            ${t('detail.addRelation') || 'Agregar relación'}
+        </button>
+    </div>
+    <div id="addRelationForm" class="add-relation-form" hidden>
+        <div class="relation-field">
+            <label class="relation-label">${t('detail.targetNode') || 'Nodo'}</label>
+            <div class="relation-search-wrap">
+                <input type="text" id="relationSearchInput" class="alias-input" placeholder="${t('detail.searchNode') || 'Buscar nodo...'}" autocomplete="off">
+                <div id="relationSearchResults" class="relation-search-results" hidden></div>
+            </div>
+        </div>
+        <div class="relation-field-row">
+            <div class="relation-field" style="flex:1">
+                <label class="relation-label">${t('detail.relationType') || 'Tipo'}</label>
+                <select id="relationTypeSelect" class="node-type-select">
+                    <option value="PARTICIPA">participa</option>
+                    <option value="PERTENECE_A">pertenece a</option>
+                    <option value="UBICADO_EN">ubicado en</option>
+                    <option value="CAUSA">causa</option>
+                    <option value="CONTRADICE">contradice</option>
+                    <option value="COMPLEMENTA">complementa</option>
+                    <option value="ACTUALIZA">actualiza</option>
+                </select>
+            </div>
+            <div class="relation-field" style="flex:1">
+                <label class="relation-label">${t('detail.role') || 'Rol'} <span style="opacity:0.5">(opc.)</span></label>
+                <input type="text" id="relationRoleInput" class="alias-input" placeholder="ej: fundador, miembro...">
+            </div>
+        </div>
+        <div class="relation-actions">
+            <button class="action-btn primary" onclick="saveRelation('${node.id}')">Guardar</button>
+            <button class="action-btn" onclick="toggleAddRelation()">Cancelar</button>
+        </div>
+    </div>`;
+
+    html += `</div>`;
     return html;
+}
+
+// --- Add Relation ---
+let _relationTargetId = null;
+let _relationSearchTimeout = null;
+
+function toggleAddRelation(nodeId) {
+    const form = document.getElementById('addRelationForm');
+    if (!form) return;
+    form.hidden = !form.hidden;
+    _relationTargetId = null;
+    if (!form.hidden) {
+        const input = document.getElementById('relationSearchInput');
+        if (input) { input.value = ''; input.focus(); }
+        setupRelationSearch();
+    }
+}
+
+function setupRelationSearch() {
+    const input = document.getElementById('relationSearchInput');
+    if (!input) return;
+    input.addEventListener('input', () => {
+        clearTimeout(_relationSearchTimeout);
+        const q = input.value.trim();
+        if (q.length < 2) {
+            document.getElementById('relationSearchResults').hidden = true;
+            _relationTargetId = null;
+            return;
+        }
+        _relationSearchTimeout = setTimeout(async () => {
+            try {
+                const res = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
+                const results = await res.json();
+                const container = document.getElementById('relationSearchResults');
+                if (!results.length) {
+                    container.innerHTML = `<div class="relation-search-item" style="opacity:0.5">${t('search.noResults') || 'Sin resultados'}</div>`;
+                    container.hidden = false;
+                    return;
+                }
+                container.innerHTML = results.slice(0, 8).map(n =>
+                    `<div class="relation-search-item" onclick="selectRelationTarget('${esc(n.id)}', '${esc(n.name || n.id)}')">
+                        ${nodeDot(n.label, n.type)} <span>${n.name || n.id}</span>
+                        <span class="conn-edge-tag">${n.type || n.label || ''}</span>
+                    </div>`
+                ).join('');
+                container.hidden = false;
+            } catch (err) {
+                console.error('Relation search error:', err);
+            }
+        }, 250);
+    });
+}
+
+function selectRelationTarget(id, name) {
+    _relationTargetId = id;
+    const input = document.getElementById('relationSearchInput');
+    if (input) input.value = name;
+    document.getElementById('relationSearchResults').hidden = true;
+}
+
+async function saveRelation(sourceId) {
+    if (!_relationTargetId) {
+        alert(t('detail.selectNode') || 'Selecciona un nodo primero');
+        return;
+    }
+    const type = document.getElementById('relationTypeSelect').value;
+    const role = document.getElementById('relationRoleInput')?.value?.trim() || '';
+
+    try {
+        const res = await fetch(`${API}/api/edge/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: sourceId, target: _relationTargetId, type, role })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            toggleAddRelation();
+            await navigateTo(sourceId);
+        } else {
+            alert('Error: ' + (data.error || 'unknown'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
 }
 
 async function searchRelatedNews(query) {
@@ -1841,13 +2144,18 @@ let feedTotal = 0;
 function switchRightTab(tab) {
     currentRightTab = tab;
     document.querySelectorAll('.right-tab').forEach(b => b.classList.remove('active'));
-    document.getElementById(tab === 'feed' ? 'tabFeed' : 'tabNode').classList.add('active');
+    const tabMap = { feed: 'tabFeed', node: 'tabNode', sources: 'tabSources' };
+    document.getElementById(tabMap[tab]).classList.add('active');
     document.getElementById('rightNodePanel').hidden = tab !== 'node';
     document.getElementById('rightFeedPanel').hidden = tab !== 'feed';
+    document.getElementById('rightSourcesPanel').hidden = tab !== 'sources';
 
     if (tab === 'feed' && document.getElementById('newsFeed').children.length === 0) {
         feedPage = 0;
         loadNewsFeed();
+    }
+    if (tab === 'sources') {
+        loadSourcesPanel();
     }
 }
 
@@ -2176,6 +2484,137 @@ function formatDate(str) {
         const locale = currentLang === 'es' ? 'es-CL' : 'en-US';
         return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch { return str; }
+}
+
+// --- Sources panel ---
+
+let sourcesData = [];
+let topicsData = { topics: [] };
+
+async function loadSourcesPanel() {
+    try {
+        const [feedsRes, topicsRes] = await Promise.all([
+            fetch('/api/sources').then(r => r.json()),
+            fetch('/api/topics').then(r => r.json())
+        ]);
+        sourcesData = feedsRes;
+        topicsData = topicsRes;
+    } catch (e) {
+        console.error('Error loading sources:', e);
+    }
+    renderSourcesPanel();
+}
+
+function renderSourcesPanel() {
+    // Topics
+    const topicsList = document.getElementById('topicsList');
+    topicsList.innerHTML = '';
+    if (topicsData.topics.length === 0) {
+        topicsList.innerHTML = `<span class="sources-empty">${t('sources.noTopics')}</span>`;
+    } else {
+        topicsData.topics.forEach((topic, i) => {
+            const chip = document.createElement('span');
+            chip.className = 'alias-chip';
+            chip.innerHTML = `${topic} <button class="alias-remove" onclick="removeTopic(${i})">&times;</button>`;
+            topicsList.appendChild(chip);
+        });
+    }
+
+    // Feeds
+    const feedsList = document.getElementById('feedsList');
+    feedsList.innerHTML = '';
+    const enabledCount = sourcesData.filter(f => f.enabled !== false).length;
+    document.getElementById('sourcesCount').textContent = `${enabledCount}/${sourcesData.length} ${t('sources.enabled')}`;
+
+    sourcesData.forEach((feed, i) => {
+        const row = document.createElement('div');
+        row.className = 'feed-row' + (feed.enabled === false ? ' disabled' : '');
+        row.innerHTML = `
+            <label class="feed-toggle">
+                <input type="checkbox" ${feed.enabled !== false ? 'checked' : ''} onchange="toggleFeed(${i}, this.checked)">
+                <span class="feed-toggle-slider"></span>
+            </label>
+            <div class="feed-info">
+                <span class="feed-name">${feed.name}</span>
+                <span class="feed-region">${feed.lang} · ${feed.region || ''}</span>
+            </div>
+            <button class="alias-remove" onclick="removeFeed(${i})" title="Eliminar">&times;</button>
+        `;
+        feedsList.appendChild(row);
+    });
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+async function toggleFeed(index, enabled) {
+    sourcesData[index].enabled = enabled;
+    await fetch('/api/sources', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sourcesData)
+    });
+    renderSourcesPanel();
+}
+
+async function removeFeed(index) {
+    sourcesData.splice(index, 1);
+    await fetch('/api/sources', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sourcesData)
+    });
+    renderSourcesPanel();
+}
+
+function toggleAddFeedForm() {
+    const form = document.getElementById('addFeedForm');
+    form.hidden = !form.hidden;
+    if (!form.hidden) document.getElementById('newFeedName').focus();
+}
+
+async function saveFeed() {
+    const name = document.getElementById('newFeedName').value.trim();
+    const url = document.getElementById('newFeedUrl').value.trim();
+    if (!name || !url) return;
+
+    const lang = document.getElementById('newFeedLang').value.trim();
+    const region = document.getElementById('newFeedRegion').value.trim();
+    const id = name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    sourcesData.push({ id, name, url, lang, region, enabled: true });
+    await fetch('/api/sources', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sourcesData)
+    });
+    document.getElementById('newFeedName').value = '';
+    document.getElementById('newFeedUrl').value = '';
+    document.getElementById('newFeedLang').value = '';
+    document.getElementById('newFeedRegion').value = '';
+    document.getElementById('addFeedForm').hidden = true;
+    renderSourcesPanel();
+}
+
+async function addTopic() {
+    const input = document.getElementById('topicInput');
+    const topic = input.value.trim();
+    if (!topic) return;
+    topicsData.topics.push(topic);
+    await fetch('/api/topics', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(topicsData)
+    });
+    input.value = '';
+    renderSourcesPanel();
+}
+
+async function removeTopic(index) {
+    topicsData.topics.splice(index, 1);
+    await fetch('/api/topics', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(topicsData)
+    });
+    renderSourcesPanel();
 }
 
 // --- Boot ---

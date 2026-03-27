@@ -1,22 +1,28 @@
 # Lombardi
 
-> Es un visualizador de noticias, homenaje a [Mark Lombardi](https://en.wikipedia.org/wiki/Mark_Lombardi) (1951–2000), artista que dedicó su vida a dibujar a mano las redes ocultas del poder: bancos, políticos, traficantes de armas y sus conexiones invisibles. Sus dibujos son grafos de conspiración — mapas de relaciones que el periodismo convencional no podía (o no quería) articular.
+Es un visualizador de noticias, homenaje a [Mark Lombardi](https://en.wikipedia.org/wiki/Mark_Lombardi) (1951–2000), artista que dedicó su vida a dibujar a mano las redes ocultas del poder: bancos, políticos, traficantes de armas y sus conexiones invisibles. Sus dibujos son grafos de conspiración — mapas de relaciones que el periodismo convencional no podía (o no quería) articular.
 
-![Carlos Cardoen, Industrias Cardoen, Chile, 1982–94 (séptima versión)](https://www.moma.org/media/W1siZiIsIjE3MDc1NyJdLFsicCIsImNvbnZlcnQiLCItcXVhbGl0eSA5MCAtcmVzaXplIDIwMDB4MjAwMFx1MDAzZSJdXQ.jpg?sha=3d7d1252c3fa0bcb)
+![Carlos Cardoen, Industrias Cardoen, Chile, 1982–94 (séptima versión)](docs/industries-carlos-cardoen-of-santiago.png)
 
 *Mark Lombardi — Carlos Cardoen, Industrias Cardoen, Chile, 1982–94 (séptima versión), 1999. Grafito sobre papel. MoMA, Nueva York.*
 
-**Lombardi** automatiza lo que Mark hacía a mano: trazar las líneas entre actores, eventos y contradicciones a partir del flujo noticioso mundial, usando inteligencia artificial local para que la soberanía sobre los datos permanezca en manos del investigador.
+**Lombardi** automatiza lo que Mark L. hacía a mano: trazar las líneas entre actores, eventos y contradicciones a partir del flujo noticioso mundial, usando inteligencia artificial local para que la soberanía sobre los datos permanezca en manos del investigador.
 
-## Qué hace
+![Lombardi — interfaz](docs/screenshot.png)
 
-- Ingiere noticias de 31+ feeds RSS internacionales (BBC, TASS, Al Jazeera, China Daily, Breitbart, Le Monde...)
-- Extrae entidades, eventos y relaciones usando LLMs locales (Ollama)
-- Construye un grafo de conocimiento en Apache AGE (PostgreSQL + Cypher)
-- Visualiza un **egosistema de nodo** navegable: foco dinámico con grados de separación
-- Enriquece nodos desde Wikidata
-- Permite editar tipos, aliases y fusionar nodos desde la interfaz
-- Procesa noticias on-demand con Claude API (streaming)
+## Funcionalidades
+
+- **Ingesta de noticias** — Feeds RSS configurables con toggle on/off por fuente
+- **Temas de interés** — Filtra el flujo noticioso por queries relevantes para el investigador
+- **Extracción ontológica** — LLMs locales (Ollama) extraen actores, eventos y relaciones
+- **Grafo de conocimiento** — Apache AGE (PostgreSQL + Cypher) como base
+- **Visualización egocéntrica** — Grafo navegable con foco dinámico y grados de separación
+- **Detección de contradicciones** — Identifica tensiones entre fuentes sobre un mismo evento
+- **Edición de nodos** — Tipos, aliases, merge, descripción, eliminación
+- **Enriquecimiento** — Wikidata + Claude API (on-demand, streaming)
+- **Gestión de fuentes** — CRUD completo de feeds RSS y temas de interés
+- **i18n** — Español / English con detección automática
+- **Tema claro/oscuro**
 
 ## Stack
 
@@ -76,7 +82,8 @@ node backend/api.js              # http://localhost:3000
 │   ├── schema.json         # Ontología (fuente de verdad)
 │   ├── aliases.json        # Normalización de entidades
 │   ├── seed-knowledge.json # Grafo base
-│   ├── sources/feeds.csv   # 31+ feeds RSS curados
+│   ├── sources/feeds.json   # Feeds RSS configurables
+│   ├── sources/topics.json  # Temas de interés
 │   └── raw_news/           # Noticias crudas + extracciones
 ├── docs/
 │   └── local-deploy.md

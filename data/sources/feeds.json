@@ -1,0 +1,250 @@
+[
+  {
+    "id": "bbc-news-world",
+    "name": "BBC News - World",
+    "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+    "lang": "en",
+    "region": "UK / global",
+    "enabled": true
+  },
+  {
+    "id": "cnn-world",
+    "name": "CNN - World",
+    "url": "http://rss.cnn.com/rss/edition_world.rss",
+    "lang": "en",
+    "region": "US / global",
+    "enabled": true
+  },
+  {
+    "id": "associated-press-world-top-news",
+    "name": "Associated Press - World Top News",
+    "url": "http://hosted.ap.org/lineups/WORLDHEADS.rss",
+    "lang": "en",
+    "region": "US / global",
+    "enabled": true
+  },
+  {
+    "id": "al-jazeera-english-all-news",
+    "name": "Al Jazeera English - All News",
+    "url": "https://www.aljazeera.com/xml/rss/all.xml",
+    "lang": "en",
+    "region": "Qatar / global",
+    "enabled": true
+  },
+  {
+    "id": "financial-times-world",
+    "name": "Financial Times - World",
+    "url": "https://www.ft.com/world?format=rss",
+    "lang": "en",
+    "region": "UK / global",
+    "enabled": true
+  },
+  {
+    "id": "npr-world",
+    "name": "NPR - World",
+    "url": "https://feeds.npr.org/1004/rss.xml",
+    "lang": "en",
+    "region": "US / global",
+    "enabled": true
+  },
+  {
+    "id": "deutsche-welle-world-en",
+    "name": "Deutsche Welle - World (EN)",
+    "url": "https://rss.dw.com/rdf/rss-en-world",
+    "lang": "en",
+    "region": "Germany / global",
+    "enabled": true
+  },
+  {
+    "id": "china-daily-world",
+    "name": "China Daily - World",
+    "url": "http://www.chinadaily.com.cn/rss/world_rss.xml",
+    "lang": "en",
+    "region": "China / global",
+    "enabled": true
+  },
+  {
+    "id": "new-york-times-world",
+    "name": "New York Times - World",
+    "url": "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+    "lang": "en",
+    "region": "US / global",
+    "enabled": true
+  },
+  {
+    "id": "washington-post-world",
+    "name": "Washington Post - World",
+    "url": "https://feeds.washingtonpost.com/rss/world",
+    "lang": "en",
+    "region": "US / global",
+    "enabled": true
+  },
+  {
+    "id": "the-guardian-world",
+    "name": "The Guardian - World",
+    "url": "https://www.theguardian.com/world/rss",
+    "lang": "en",
+    "region": "UK / global",
+    "enabled": true
+  },
+  {
+    "id": "fox-news-world",
+    "name": "Fox News - World",
+    "url": "https://moxie.foxnews.com/google-publisher/world.xml",
+    "lang": "en",
+    "region": "US / global",
+    "enabled": true
+  },
+  {
+    "id": "breitbart-news-main",
+    "name": "Breitbart News - Main",
+    "url": "https://feeds.feedburner.com/breitbart",
+    "lang": "en",
+    "region": "US",
+    "enabled": true
+  },
+  {
+    "id": "democracy-now-daily-show",
+    "name": "Democracy Now! - Daily Show",
+    "url": "https://www.democracynow.org/podcast.xml",
+    "lang": "en",
+    "region": "US / global",
+    "enabled": true
+  },
+  {
+    "id": "jacobin-magazine",
+    "name": "Jacobin Magazine",
+    "url": "https://jacobin.com/feed/",
+    "lang": "en",
+    "region": "US",
+    "enabled": true
+  },
+  {
+    "id": "haaretz-world-news",
+    "name": "Haaretz - World News",
+    "url": "https://haaretz.com/srv/world-news-rss",
+    "lang": "en",
+    "region": "Israel / global",
+    "enabled": true
+  },
+  {
+    "id": "jerusalem-post-breaking-news",
+    "name": "Jerusalem Post - Breaking News",
+    "url": "https://www.jpost.com/rss/rssfeedsheadlines.aspx",
+    "lang": "en",
+    "region": "Israel / Middle East",
+    "enabled": true
+  },
+  {
+    "id": "rt-russia-today-news",
+    "name": "RT (Russia Today) - News",
+    "url": "http://rss.russiatoday.ru",
+    "lang": "en",
+    "region": "Russia / global",
+    "enabled": true
+  },
+  {
+    "id": "tass-all-news",
+    "name": "TASS - All News",
+    "url": "http://tass.com/rss/v2.xml",
+    "lang": "en",
+    "region": "Russia / global",
+    "enabled": true
+  },
+  {
+    "id": "the-moscow-times-news",
+    "name": "The Moscow Times - News",
+    "url": "https://www.themoscowtimes.com/rss/news",
+    "lang": "en",
+    "region": "Russia",
+    "enabled": true
+  },
+  {
+    "id": "the-hindu-world-news",
+    "name": "The Hindu - World News",
+    "url": "https://www.thehindu.com/news/international/feeder/default.rss",
+    "lang": "en",
+    "region": "India / global",
+    "enabled": true
+  },
+  {
+    "id": "ndtv-world-news",
+    "name": "NDTV - World News",
+    "url": "https://feeds.feedburner.com/ndtvnews-world-news",
+    "lang": "en",
+    "region": "India / global",
+    "enabled": true
+  },
+  {
+    "id": "unian-news-agency-en",
+    "name": "UNIAN - News Agency (EN)",
+    "url": "https://rss.unian.net/site/news_eng.rss",
+    "lang": "en",
+    "region": "Ukraine",
+    "enabled": true
+  },
+  {
+    "id": "ukrainska-pravda-all-news",
+    "name": "Ukrainska Pravda - All News",
+    "url": "https://www.pravda.com.ua/rss/",
+    "lang": "uk",
+    "region": "Ukraine",
+    "enabled": true
+  },
+  {
+    "id": "euromaidan-press",
+    "name": "Euromaidan Press",
+    "url": "https://euromaidanpress.com/feed",
+    "lang": "en",
+    "region": "Ukraine / global",
+    "enabled": true
+  },
+  {
+    "id": "le-monde-international",
+    "name": "Le Monde - International",
+    "url": "https://www.lemonde.fr/international/rss_full.xml",
+    "lang": "fr",
+    "region": "France / global",
+    "enabled": true
+  },
+  {
+    "id": "der-spiegel-ausland",
+    "name": "Der Spiegel - Ausland",
+    "url": "https://www.spiegel.de/ausland/index.rss",
+    "lang": "de",
+    "region": "Germany / global",
+    "enabled": true
+  },
+  {
+    "id": "sydney-morning-herald-world",
+    "name": "Sydney Morning Herald - World",
+    "url": "https://www.smh.com.au/rss/world.xml",
+    "lang": "en",
+    "region": "Australia / global",
+    "enabled": true
+  },
+  {
+    "id": "the-japan-times-top-stories",
+    "name": "The Japan Times - Top Stories",
+    "url": "https://www.japantimes.co.jp/feed/topstories/",
+    "lang": "en",
+    "region": "Japan",
+    "enabled": true
+  },
+  {
+    "id": "china-org-cn-general",
+    "name": "China.org.cn - General",
+    "url": "http://www.china.org.cn/rss/1201719.xml",
+    "lang": "en",
+    "region": "China",
+    "enabled": true
+  },
+  {
+    "id": "clarin-mundo",
+    "name": "Clarin - Mundo",
+    "url": "https://www.clarin.com/rss/mundo/",
+    "lang": "es",
+    "region": "Argentina / global",
+    "enabled": true
+  }
+]

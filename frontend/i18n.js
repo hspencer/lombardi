@@ -13,6 +13,22 @@ const TRANSLATIONS = {
         // Tabs
         'tab.node': 'Nodo',
         'tab.feed': 'Noticias',
+        'tab.sources': 'Fuentes',
+
+        // Sources panel
+        'sources.feeds': 'Feeds RSS',
+        'sources.topics': 'Temas de interés',
+        'sources.addFeed': 'Agregar fuente',
+        'sources.feedName': 'Nombre del medio',
+        'sources.feedUrl': 'URL del feed RSS',
+        'sources.add': 'Agregar',
+        'sources.cancel': 'Cancelar',
+        'sources.feedLang': 'Idioma (en, es...)',
+        'sources.feedRegion': 'Región (US / global...)',
+        'sources.addTopic': 'Agregar tema...',
+        'sources.topicsHint': 'Solo se descargarán noticias que mencionen estos temas. Sin temas = todo.',
+        'sources.enabled': 'habilitadas',
+        'sources.noTopics': 'Sin filtro de temas (se descarga todo)',
 
         // Feed
         'feed.claims': 'afirmaciones',
@@ -133,6 +149,21 @@ const TRANSLATIONS = {
 
         'tab.node': 'Node',
         'tab.feed': 'News',
+        'tab.sources': 'Sources',
+
+        'sources.feeds': 'RSS Feeds',
+        'sources.topics': 'Topics of Interest',
+        'sources.addFeed': 'Add source',
+        'sources.feedName': 'Outlet name',
+        'sources.feedUrl': 'RSS feed URL',
+        'sources.add': 'Add',
+        'sources.cancel': 'Cancel',
+        'sources.feedLang': 'Language (en, es...)',
+        'sources.feedRegion': 'Region (US / global...)',
+        'sources.addTopic': 'Add topic...',
+        'sources.topicsHint': 'Only news mentioning these topics will be downloaded. No topics = everything.',
+        'sources.enabled': 'enabled',
+        'sources.noTopics': 'No topic filter (downloading everything)',
 
         'feed.claims': 'claims',
         'feed.sort.date': 'Recent',

@@ -55,10 +55,113 @@
     color: var(--ink-muted);
     font-size: var(--font-size-xs);
 }
+.graph-tooltip .tooltip-date {
+    display: inline-block;
+    margin-left: 6px;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    color: var(--accent);
+    opacity: 0.85;
+}
 
 .graph-tooltip.visible { opacity: 1; }
 
 /* --- Aristas con flecha (CAUSA, DESMIENTE) --- */
 .edge-arrow marker path {
     fill: inherit;
+}
+
+/* --- Timeline Bar --- */
+.timeline-bar {
+    position: absolute;
+    bottom: 40px;
+    left: var(--space-md);
+    right: var(--space-md);
+    height: 44px;
+    z-index: 5;
+    background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+}
+.timeline-bar[hidden] { display: none; }
+
+/* Push breadcrumbs above timeline when visible */
+.timeline-bar:not([hidden]) ~ .breadcrumbs {
+    bottom: 88px;
+}
+
+.timeline-play-btn {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    margin-left: 6px;
+    border-radius: 50%;
+    border: 1px solid var(--border-default);
+    background: var(--bg-surface-alt);
+    color: var(--accent);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--duration-fast) var(--ease-default);
+}
+.timeline-play-btn:hover {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--ink-inverse);
+}
+.timeline-play-btn svg {
+    width: 12px;
+    height: 12px;
+    fill: currentColor;
+}
+
+.timeline-svg {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+}
+
+.timeline-density rect {
+    fill: var(--ink-faint);
+    opacity: 0.35;
+}
+
+.timeline-brush .selection {
+    fill: var(--accent);
+    fill-opacity: 0.18;
+    stroke: var(--accent);
+    stroke-width: 1;
+    rx: 3;
+}
+.timeline-brush .handle {
+    fill: var(--accent);
+    width: 3px;
+    rx: 1.5;
+}
+.timeline-brush .overlay {
+    cursor: crosshair;
+}
+
+.timeline-date-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    fill: var(--ink-muted);
+    pointer-events: none;
+    dominant-baseline: middle;
+}
+
+.timeline-axis text {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    fill: var(--ink-faint);
+}
+.timeline-axis line,
+.timeline-axis path {
+    stroke: var(--border-default);
+    stroke-width: 0.5;
 }

@@ -8,6 +8,8 @@ const PORT = 3000;
 const FRONTEND_DIR = path.join(__dirname, '../frontend');
 const ALIASES_PATH = path.join(__dirname, '../data/aliases.json');
 const SCHEMA_PATH = path.join(__dirname, '../data/schema.json');
+const FEEDS_PATH = path.join(__dirname, '../data/sources/feeds.json');
+const TOPICS_PATH = path.join(__dirname, '../data/sources/topics.json');
 
 const pool = new Pool({
     host: 'localhost',
@@ -81,6 +83,92 @@ async function ageQuery2(cypher, cols) {
 
 async function handleAPI(req, res) {
     const url = new URL(req.url, `http://localhost:${PORT}`);
+
+    // === PANORAMA: N eventos recientes + actores + aristas ===
+    if (url.pathname === '/api/panorama') {
+        const limit = Math.min(20, Math.max(1, parseInt(url.searchParams.get('limit') || '10')));
+
+        // 1. Eventos más recientes (try dated first, then any)
+        let events = await ageQuery(
+            `MATCH (e:Evento) WHERE e.date IS NOT NULL AND e.date <> 'null' AND e.date <> '' RETURN e ORDER BY e.date DESC LIMIT ${limit}`
+        ).catch(() => []);
+
+        // Fallback: most connected events if no dated ones
+        if (!events.length) {
+            events = await ageQuery(
+                `MATCH (e:Evento)-[r]-() RETURN e, count(r) as c ORDER BY c DESC LIMIT ${limit}`
+            ).catch(() => []);
+        }
+
+        if (!events.length) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ nodes: [], edges: [], focalIds: [] }));
+            return;
+        }
+
+        const nodeMap = new Map();
+        const focalIds = [];
+
+        for (const v of events) {
+            const n = flat(v);
+            n.type = 'Event';
+            n._degree = 0;
+            nodeMap.set(n.id, n);
+            focalIds.push(n.id);
+        }
+
+        // Enrich events with dates from news_raw if missing
+        const client = await pool.connect();
+        try {
+            for (const [id, n] of nodeMap) {
+                if (!n.date || n.date === 'null' || n.date === '') {
+                    const newsDate = await client.query(
+                        "SELECT pub_date, ingested_at FROM news_raw WHERE link = $1 OR title ILIKE $2 LIMIT 1",
+                        [n.source_url || '', `%${(n.name || '').slice(0, 40)}%`]
+                    );
+                    if (newsDate.rows.length) {
+                        n.date = newsDate.rows[0].pub_date || newsDate.rows[0].ingested_at || null;
+                    }
+                }
+            }
+        } finally {
+            client.release();
+        }
+
+        // 2. Actores conectados a esos eventos
+        const eventIds = focalIds.map(id => `'${esc(id)}'`).join(',');
+        const actors = await ageQuery(
+            `MATCH (a:Actor)-[r]-(e:Evento) WHERE e.id IN [${eventIds}] RETURN a`
+        ).catch(() => []);
+
+        for (const v of actors) {
+            const n = flat(v);
+            if (!nodeMap.has(n.id)) {
+                n._degree = 1;
+                nodeMap.set(n.id, n);
+            }
+        }
+
+        // 3. Aristas entre todos los nodos
+        const allIds = [...nodeMap.keys()].map(id => `'${esc(id)}'`).join(',');
+        const edgeRows = await ageQuery(
+            `MATCH (a)-[r]-(b) WHERE a.id IN [${allIds}] AND b.id IN [${allIds}] RETURN {source: a.id, target: b.id, type: type(r), role: r.role, tension_score: r.tension_score}`
+        ).catch(() => []);
+
+        const edgeMap = new Map();
+        for (const e of edgeRows) {
+            const key = [e.source, e.target].sort().join('|') + '|' + e.type;
+            if (!edgeMap.has(key)) edgeMap.set(key, e);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            nodes: [...nodeMap.values()],
+            edges: [...edgeMap.values()],
+            focalIds
+        }));
+        return;
+    }
 
     // === EGOSISTEMA: nodo focal + grado 1 + grado 2 ===
     if (url.pathname === '/api/ego') {
@@ -876,7 +964,94 @@ If no relationships are warranted, return [].`;
                 }
             }
 
-            // 7. Write LLM-discovered edges to graph
+            // 7. Generative LLM phase — propose NEW entities not yet in the graph
+            let generatedNodes = [];
+            if (apiKey) {
+                emit('status', { message: 'Buscando entidades conocidas no representadas...' });
+
+                const currentConnNames = neighbors.slice(0, 15).map(n => n.m.name).filter(Boolean).join(', ');
+                const genPrompt = `You are an ontological analyst for a geopolitical knowledge graph.
+
+FOCAL NODE: ${focal.name} (${focal.type || focal.event_type || focal.label || 'Actor'}): ${focal.description || ''}
+ALREADY CONNECTED TO: ${currentConnNames || '(none)'}
+
+TASK: What well-known real-world entities should be connected to "${focal.name}" but are likely NOT yet in the graph?
+Only propose entities that are clearly, factually related (member organizations, key people, subsidiaries, geographic locations, parent entities).
+Do NOT propose entities already listed in ALREADY CONNECTED TO.
+
+For each entity provide:
+- id: kebab-case identifier (e.g. "openai", "sam-altman")
+- name: proper name
+- type: Person | Organization | Location
+- description: one-line description in Spanish
+- relation: PERTENECE_A | UBICADO_EN | PARTICIPA | COMPLEMENTA
+- role: brief reason in Spanish (e.g. "empresa miembro", "fundador")
+- direction: "focal->target" or "target->focal"
+
+Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [].`;
+
+                try {
+                    const genRes = await fetch('https://api.anthropic.com/v1/messages', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': apiKey,
+                            'anthropic-version': '2023-06-01'
+                        },
+                        signal: AbortSignal.timeout(60000),
+                        body: JSON.stringify({
+                            model: 'claude-haiku-4-5-20251001',
+                            max_tokens: 2048,
+                            messages: [{ role: 'user', content: genPrompt }]
+                        })
+                    });
+                    const genData = await genRes.json();
+                    const genText = (genData.content?.[0]?.text || '').trim();
+                    const genMatch = genText.match(/\[[\s\S]*\]/);
+                    if (genMatch) {
+                        generatedNodes = JSON.parse(genMatch[0]);
+                    }
+                } catch (err) {
+                    emit('status', { message: `Generative LLM: ${err.message}` });
+                }
+
+                // Create new nodes and edges
+                const validTypes = ['PARTICIPA', 'CAUSA', 'CONTRADICE', 'COMPLEMENTA', 'DESMIENTE', 'ACTUALIZA', 'UBICADO_EN', 'PERTENECE_A'];
+                for (const ent of generatedNodes) {
+                    if (!ent.id || !ent.name || !ent.relation) continue;
+                    if (!validTypes.includes(ent.relation)) continue;
+                    // Skip if already connected
+                    if (connectedIds.has(ent.id)) continue;
+
+                    // Create the new Actor node
+                    await ageQuery(`
+                        MERGE (a:Actor {id: '${esc(ent.id)}'})
+                        SET a.name = '${esc(ent.name)}',
+                            a.type = '${esc(ent.type || 'Organization')}',
+                            a.description = '${esc(ent.description || '')}'
+                        RETURN a
+                    `).catch(() => {});
+
+                    // Create the edge (respecting direction)
+                    const isReverse = ent.direction === 'target->focal' || ent.direction === 'target→focal';
+                    const src = isReverse ? ent.id : id;
+                    const tgt = isReverse ? id : ent.id;
+                    await ageQuery(`
+                        MATCH (a {id: '${esc(src)}'}), (b {id: '${esc(tgt)}'})
+                        MERGE (a)-[r:${ent.relation}]->(b)
+                        SET r.role = '${esc(ent.role || '')}'
+                        RETURN a, b
+                    `).catch(() => {});
+
+                    emit('discovered', {
+                        edge: { source: src, target: tgt, type: ent.relation, role: ent.role || '' },
+                        targetNode: { id: ent.id, name: ent.name, type: ent.type, label: 'Actor' },
+                        reason: `generado: ${ent.role || ent.description || ''}`
+                    });
+                }
+            }
+
+            // 8. Write LLM-discovered edges to graph (existing nodes)
             let created = 0;
             for (const rel of llmDiscovered) {
                 if (!rel.source || !rel.target || !rel.type) continue;
@@ -905,12 +1080,44 @@ If no relationships are warranted, return [].`;
                 aliasMatches: aliasMatches.length,
                 cooccurrences: cooccurrence.length,
                 llmDiscovered: created,
-                total: aliasMatches.length + created
+                generated: generatedNodes.length,
+                total: aliasMatches.length + created + generatedNodes.length
             });
         } catch (err) {
             emit('error', { message: err.message });
         }
         res.end();
+        return;
+    }
+
+    // --- Manual edge creation ---
+    if (url.pathname === '/api/edge/create' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { source, target, type, role } = body;
+        if (!source || !target || !type) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end('{"error":"source, target, and type required"}');
+            return;
+        }
+        const validTypes = ['PARTICIPA', 'CAUSA', 'CONTRADICE', 'COMPLEMENTA', 'DESMIENTE', 'ACTUALIZA', 'UBICADO_EN', 'PERTENECE_A'];
+        if (!validTypes.includes(type)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(`{"error":"Invalid edge type. Valid: ${validTypes.join(', ')}"}`);
+            return;
+        }
+        try {
+            await ageQuery(`
+                MATCH (a {id: '${esc(source)}'}), (b {id: '${esc(target)}'})
+                MERGE (a)-[r:${type}]->(b)
+                ${role ? `SET r.role = '${esc(role)}'` : ''}
+                RETURN a, b
+            `);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, source, target, type, role: role || '' }));
+        } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
         return;
     }
 
@@ -1376,6 +1583,41 @@ If no relationships are warranted, return [].`;
             client.release();
         }
         res.end();
+        return;
+    }
+
+    // === SOURCES (feeds) ===
+    if (url.pathname === '/api/sources' && req.method === 'GET') {
+        const data = JSON.parse(fs.readFileSync(FEEDS_PATH, 'utf-8'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+        return;
+    }
+
+    if (url.pathname === '/api/sources' && req.method === 'PUT') {
+        const body = await readBody(req);
+        const data = JSON.parse(body);
+        fs.writeFileSync(FEEDS_PATH, JSON.stringify(data, null, 2));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+    }
+
+    // === TOPICS ===
+    if (url.pathname === '/api/topics' && req.method === 'GET') {
+        const data = JSON.parse(fs.readFileSync(TOPICS_PATH, 'utf-8'));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(data));
+        return;
+    }
+
+    if (url.pathname === '/api/topics' && req.method === 'PUT') {
+        const body = await readBody(req);
+        const data = JSON.parse(body);
+        data.updated_at = new Date().toISOString().slice(0, 10);
+        fs.writeFileSync(TOPICS_PATH, JSON.stringify(data, null, 2));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
         return;
     }
 
