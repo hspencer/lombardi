@@ -57,21 +57,6 @@
         "PM israelí"
       ]
     },
-    "estados-unidos": {
-      "canonical": "Estados Unidos",
-      "type": "Location",
-      "aliases": [
-        "EE.UU.",
-        "EEUU",
-        "USA",
-        "US",
-        "United States",
-        "the United States",
-        "the US",
-        "America",
-        "Washington"
-      ]
-    },
     "rusia": {
       "canonical": "Rusia",
       "type": "Location",
@@ -388,6 +373,22 @@
       "canonical": "ONU",
       "type": "Organization",
       "aliases": []
+    },
+    "estados-unidos-de-america": {
+      "canonical": "Estados Unidos",
+      "type": "Location",
+      "aliases": [
+        "EE.UU.",
+        "EEUU",
+        "USA",
+        "US",
+        "United States",
+        "the United States",
+        "the US",
+        "America",
+        "Washington",
+        "estados-unidos"
+      ]
     }
   }
 }

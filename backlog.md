@@ -50,9 +50,11 @@ Estado del proyecto al 2026-03-27.
 - [x] ~~Grafo de conocimiento general (seed)~~ ✓
 - [x] ~~Consola de procesamiento en UI~~ ✓
 - [x] ~~Breadcrumbs semánticos con aristas~~ ✓
-- [ ] **Nodo Evento en ingesta** — Está en schema pero `ingest.js` no lo extrae como nodo separado. Actualmente `event_type` es solo un campo en Afirmacion.
-- [ ] **Aristas semánticas en ingesta** — Solo se crean REPORTA e INVOLUCRA. Faltan: SOSTIENE, CAUSA, COMPLEMENTA, DESMIENTE, ACTUALIZA.
-- [ ] **Resolver de contradicciones** — Usar qwen3.5 para detectar CONTRADICE entre afirmaciones del mismo hecho. Genera aristas con `tension_score`.
+- [x] ~~Ontología v2: Actor + Evento only~~ — Noticia/Afirmación eliminadas del grafo. Schema 2.0.0.
+- [x] ~~Aristas semánticas: PARTICIPA (con rol), PERTENECE_A, UBICADO_EN~~ ✓
+- [x] ~~Búsqueda web de noticias frescas~~ — Google News RSS desde buscador + ingest on-demand.
+- [x] ~~Pestañas Noticias/Nodo en panel derecho~~ — Noticias como tab principal.
+- [ ] **Resolver de contradicciones** — Usar qwen3.5 para detectar CONTRADICE entre eventos del mismo hecho. Genera aristas con `tension_score`.
 - [ ] **Reprocesamiento de noticias** — Separar ingesta (RSS→JSON) de procesamiento (JSON→extracción→grafo). Poder reprocesar con nuevo prompt/modelo sin re-ingestar.
 - [ ] **i18n de nodos** — Guardar `name_es` y `name_en` por nodo para que los títulos cambien con el idioma de la interfaz.
 

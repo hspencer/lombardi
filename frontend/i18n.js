@@ -61,7 +61,14 @@ const TRANSLATIONS = {
         'detail.delete.confirm': '¿Eliminar nodo',
         'tab.node': 'Nodo',
         'tab.feed': 'Noticias',
-        'feed.claims': 'afirmaciones'
+        'feed.claims': 'afirmaciones',
+
+        // Web search
+        'searchWeb': 'Buscar noticias sobre',
+        'searchingWeb': 'Buscando noticias sobre',
+        'noWebResults': 'No se encontraron noticias.',
+        'webResults': 'Noticias encontradas para',
+        'ingest': 'Ingestar'
     },
     en: {
         'search.placeholder': 'Search actor, event...',
@@ -119,7 +126,14 @@ const TRANSLATIONS = {
         'detail.delete.confirm': 'Delete node',
         'tab.node': 'Node',
         'tab.feed': 'News',
-        'feed.claims': 'claims'
+        'feed.claims': 'claims',
+
+        // Web search
+        'searchWeb': 'Search news about',
+        'searchingWeb': 'Searching news about',
+        'noWebResults': 'No news found.',
+        'webResults': 'News found for',
+        'ingest': 'Ingest'
     }
 };
 

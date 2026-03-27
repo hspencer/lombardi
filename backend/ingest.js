@@ -266,7 +266,7 @@ async function processFile(filePath) {
         const client = await pool.connect();
         try {
             await client.query(`
-                INSERT INTO news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed)
+                INSERT INTO public.news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, true)
                 ON CONFLICT (link) DO UPDATE SET processed = true
             `, [newsItem.source_name, newsItem.source_lang, newsItem.source_region || '',

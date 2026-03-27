@@ -53,10 +53,10 @@
         <div class="split-handle" id="splitHandle"></div>
         <div class="split-right" id="detailPanel">
             <div class="right-tabs">
-                <button id="tabNode" class="right-tab active" onclick="switchRightTab('node')">Nodo</button>
-                <button id="tabFeed" class="right-tab" onclick="switchRightTab('feed')">Noticias</button>
+                <button id="tabFeed" class="right-tab active" onclick="switchRightTab('feed')">Noticias</button>
+                <button id="tabNode" class="right-tab" onclick="switchRightTab('node')">Nodo</button>
             </div>
-            <div id="rightNodePanel" class="right-panel-content">
+            <div id="rightNodePanel" class="right-panel-content" hidden>
                 <div class="detail-empty">
                     <p>Selecciona un nodo en el grafo para ver su detalle.</p>
                 </div>
@@ -65,7 +65,7 @@
                     <div id="detailBody"></div>
                 </div>
             </div>
-            <div id="rightFeedPanel" class="right-panel-content" hidden>
+            <div id="rightFeedPanel" class="right-panel-content">
                 <div id="newsFeed" class="news-feed"></div>
                 <button id="loadMoreBtn" class="load-more-btn" onclick="loadMoreFeed()" hidden>Cargar m&aacute;s</button>
             </div>

@@ -770,6 +770,7 @@ function makeDrag() {
 // --- Detail Panel ---
 
 async function showDetail(node) {
+    switchRightTab('node');
     document.querySelector('.detail-empty').hidden = true;
     const content = document.getElementById('detailContent');
     content.hidden = false;
@@ -1015,14 +1016,21 @@ function setupSearch() {
         debounce = setTimeout(async () => {
             const res = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}`);
             const items = await res.json();
-            if (!items.length) { results.hidden = true; return; }
 
-            results.innerHTML = items.map(item =>
+            let html = items.map(item =>
                 `<li onclick="jumpTo('${item.id}')">
                     ${nodeDot(item.label, item.type)}${item.name || item.title || item.id}
                     <span class="label-tag">${item.type || item.label}</span>
                 </li>`
             ).join('');
+
+            // Always offer web search at the bottom
+            html += `<li class="search-web-option" onclick="searchWebNews('${esc(q)}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                ${t('searchWeb')} "<strong>${q}</strong>"
+            </li>`;
+
+            results.innerHTML = html;
             results.hidden = false;
         }, 250);
     });
@@ -1037,10 +1045,78 @@ function setupSearch() {
     });
 }
 
+function esc(s) { return String(s).replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+
 function jumpTo(id) {
     document.getElementById('searchResults').hidden = true;
     document.getElementById('searchInput').value = '';
     navigateTo(id, true); // Search always resets breadcrumb
+}
+
+async function searchWebNews(query) {
+    document.getElementById('searchResults').hidden = true;
+    document.getElementById('searchInput').value = '';
+
+    // Switch to feed tab to show results
+    switchRightTab('feed');
+    const feed = document.getElementById('newsFeed');
+    feed.innerHTML = `<div class="search-loading">${t('searchingWeb')} "${query}"...</div>`;
+
+    try {
+        const lang = document.documentElement.lang || 'es';
+        const res = await fetch(`${API}/api/news/search-web?q=${encodeURIComponent(query)}&lang=${lang}`);
+        const items = await res.json();
+
+        if (!items.length) {
+            feed.innerHTML = `<div class="search-loading">${t('noWebResults')}</div>`;
+            return;
+        }
+
+        feed.innerHTML = `<h4 class="web-results-header">${t('webResults')} "${query}" (${items.length})</h4>` +
+            items.map(item => {
+                const date = item.pubDate ? new Date(item.pubDate).toLocaleDateString() : '';
+                const src = typeof item.source === 'object' ? item.source['#text'] || '' : item.source || '';
+                return `<div class="news-card web-result">
+                    <div class="news-meta">
+                        <span class="news-source">${src}</span>
+                        <span class="news-date">${date}</span>
+                    </div>
+                    <div class="news-title">${item.title}</div>
+                    <div class="news-actions">
+                        <button class="ingest-btn" onclick="ingestFromWeb(this, '${esc(item.title)}', '${esc(item.link)}', '${esc(src)}', '${esc(item.pubDate)}')">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path></svg>
+                            ${t('ingest')}
+                        </button>
+                        <a href="${item.link}" target="_blank" class="news-link-external">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                        </a>
+                    </div>
+                </div>`;
+            }).join('');
+    } catch (err) {
+        feed.innerHTML = `<div class="search-loading">Error: ${err.message}</div>`;
+    }
+}
+
+async function ingestFromWeb(btn, title, link, source, pubDate) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+        const res = await fetch(`${API}/api/news/ingest-url`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, link, source, pubDate })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            btn.textContent = '✓';
+            btn.classList.add('ingested');
+        } else {
+            btn.textContent = '✗';
+        }
+    } catch {
+        btn.textContent = '✗';
+    }
 }
 
 // --- Split handle ---
@@ -1341,7 +1417,7 @@ async function fetchNewRSS() {
 
 // --- Right panel tabs ---
 
-let currentRightTab = 'node';
+let currentRightTab = 'feed';
 let feedPage = 0;
 let feedTotal = 0;
 

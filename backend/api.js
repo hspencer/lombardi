@@ -1116,6 +1116,87 @@ async function handleAPI(req, res) {
         return;
     }
 
+    // === BUSCAR NOTICIAS FRESCAS (Google News RSS) ===
+    if (url.pathname === '/api/news/search-web' && req.method === 'GET') {
+        const q = url.searchParams.get('q');
+        const lang = url.searchParams.get('lang') || 'es';
+        if (!q) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing q param' }));
+            return;
+        }
+
+        try {
+            const { XMLParser } = require('fast-xml-parser');
+            const xmlParser = new XMLParser();
+            const gnUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${lang}&gl=${lang.toUpperCase()}&ceid=${lang.toUpperCase()}:${lang}`;
+            const response = await fetch(gnUrl);
+            const xmlData = await response.text();
+            const parsed = xmlParser.parse(xmlData);
+            const items = parsed.rss?.channel?.item || [];
+
+            const results = (Array.isArray(items) ? items : [items]).slice(0, 20).map(item => ({
+                title: item.title || '',
+                link: item.link || '',
+                pubDate: item.pubDate || '',
+                source: item.source || ''
+            }));
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(results));
+        } catch (err) {
+            console.error('Google News RSS error:', err.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    // === INGESTAR noticia desde URL (on-demand) ===
+    if (url.pathname === '/api/news/ingest-url' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { title, link, source, pubDate } = body;
+        if (!link) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Missing link' }));
+            return;
+        }
+
+        // Fetch the article content
+        try {
+            const articleResp = await fetch(link);
+            const html = await articleResp.text();
+            // Extract text from HTML (basic: strip tags)
+            const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                             .replace(/<[^>]+>/g, ' ')
+                             .replace(/\s+/g, ' ')
+                             .trim()
+                             .slice(0, 3000);
+
+            // Save as raw_news JSON for the normal ingest pipeline
+            const RAW_DIR = path.join(__dirname, '../data/raw_news');
+            const fileName = `${Date.now()}-web-search.json`;
+            const newsItem = {
+                source_name: source || 'Web Search',
+                source_lang: 'multi',
+                title: title || '',
+                link: link,
+                description: text,
+                pubDate: pubDate || new Date().toISOString()
+            };
+            fs.writeFileSync(path.join(RAW_DIR, fileName), JSON.stringify(newsItem, null, 2));
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, file: fileName, message: 'Noticia guardada para procesamiento' }));
+        } catch (err) {
+            console.error('Ingest URL error:', err.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
 }
