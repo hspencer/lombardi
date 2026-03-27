@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OverStand</title>
+    <link rel="stylesheet" href="css/variables.css">
+    <link rel="stylesheet" href="css/layout.css">
+    <link rel="stylesheet" href="css/graph.css">
+    <link rel="stylesheet" href="css/detail.css">
+</head>
+<body>
+    <header class="shell-header">
+        <h1>Over<strong>Stand</strong></h1>
+        <div class="search-container">
+            <input type="text" id="searchInput" placeholder="Buscar actor, evento..." autocomplete="off">
+            <ul id="searchResults" class="search-results" hidden></ul>
+        </div>
+        <div class="stats-container">
+            <button id="statsBar" class="stats-bar" onclick="toggleProcessPanel()"></button>
+            <div id="processPanel" class="process-panel" hidden>
+                <div class="process-header">
+                    <h4 id="processPanelTitle">Processing</h4>
+                    <button onclick="toggleProcessPanel()" class="detail-close">&times;</button>
+                </div>
+                <div class="process-bar-container">
+                    <div class="process-bar" id="processBar"></div>
+                </div>
+                <div id="processDetails" class="process-details"></div>
+                <div class="process-actions">
+                    <button id="fetchRssBtn" class="ingest-btn" onclick="fetchNewRSS()">
+                        <i data-feather="rss"></i> <span data-i18n="process.fetch">Fetch RSS</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <button id="langToggle" class="lang-toggle" onclick="toggleLang()">ES</button>
+    </header>
+
+    <main class="split-view">
+        <div class="split-left" id="graphPanel">
+            <div class="graph-toolbar">
+                <button id="viewNodes" class="view-toggle active" onclick="setView('nodes')">Nodes</button>
+                <button id="viewTitles" class="view-toggle" onclick="setView('titles')">Titles</button>
+            </div>
+            <svg id="graph"></svg>
+            <nav id="breadcrumbs" class="breadcrumbs"></nav>
+        </div>
+        <div class="split-handle" id="splitHandle"></div>
+        <div class="split-right" id="detailPanel">
+            <div class="detail-empty">
+                <p>Selecciona un nodo en el grafo para ver su detalle.</p>
+            </div>
+            <div class="detail-content" id="detailContent" hidden>
+                <button class="detail-close" id="detailClose">&times;</button>
+                <div id="detailBody"></div>
+            </div>
+        </div>
+    </main>
+
+    <script src="https://unpkg.com/feather-icons"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="i18n.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

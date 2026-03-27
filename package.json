@@ -1,5 +1,5 @@
 {
-  "name": "overstanding",
+  "name": "overstand",
   "version": "0.1.0",
   "description": "Triangulacion ontologica de fuentes de noticias globales",
   "scripts": {
@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "csv-parser": "^3.2.0",
-    "fast-xml-parser": "^5.5.9"
+    "fast-xml-parser": "^5.5.9",
+    "pg": "^8.20.0"
   }
 }

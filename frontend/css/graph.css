@@ -1,0 +1,53 @@
+/* --- Animaciones del grafo --- */
+
+/* Pulso para nodos en disputa crítica */
+@keyframes pulse-alert {
+    0%   { r: 7; opacity: 1; }
+    50%  { r: 14; opacity: 0.3; }
+    100% { r: 7; opacity: 1; }
+}
+
+.node-disputed-halo {
+    fill: none;
+    stroke: var(--tension-alerta);
+    stroke-width: 2;
+    opacity: 0.6;
+    animation: pulse-alert 2s ease-in-out infinite;
+}
+
+/* Glow para actores que desmienten agresivamente */
+@keyframes glow-authority {
+    0%   { stroke-opacity: 0.4; }
+    50%  { stroke-opacity: 1; }
+    100% { stroke-opacity: 0.4; }
+}
+
+.node-authority-glow {
+    stroke: var(--tag-actor-ink);
+    stroke-width: 4;
+    animation: glow-authority 3s ease-in-out infinite;
+}
+
+/* --- Tooltip del grafo --- */
+.graph-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    padding: var(--space-xs) var(--space-sm);
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+    color: var(--ink-primary);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-default);
+    z-index: 10;
+}
+
+.graph-tooltip.visible { opacity: 1; }
+
+/* --- Aristas con flecha (CAUSA, DESMIENTE) --- */
+.edge-arrow marker path {
+    fill: inherit;
+}

@@ -1,0 +1,81 @@
+:root {
+    /* --- Superficie --- */
+    --bg-app:              #0f1117;
+    --bg-surface:          #1a1d27;
+    --bg-surface-alt:      #22262f;
+    --bg-panel:            #1a1d27;
+
+    /* --- Tinta --- */
+    --ink-primary:         #e2e6ec;
+    --ink-muted:           #7a8194;
+    --ink-faint:           #4a4f5c;
+
+    /* --- Bordes --- */
+    --border-default:      #2a2e3a;
+    --border-active:       #4a5068;
+
+    /* --- Nodos del grafo --- */
+    --node-actor:          #2C3E50;
+    --node-actor-stroke:   #ECF0F1;
+    --node-evento:         #E67E22;
+    --node-evento-stroke:  #D35400;
+    --node-afirmacion:     #95A5A6;
+    --node-noticia:        #34495E;
+
+    /* --- Aristas del grafo --- */
+    --edge-reporta:        #BDC3C7;
+    --edge-sostiene:       #7F8C8D;
+    --edge-participa:      #2980B9;
+    --edge-causa:          #8E44AD;
+    --edge-contradice:     #E74C3C;
+    --edge-complementa:    #27AE60;
+    --edge-desmiente:      #C0392B;
+    --edge-actualiza:      #F1C40F;
+    --edge-involucra:      #7F8C8D;
+
+    /* --- Semántica de tensión --- */
+    --tension-conflicto:   #E74C3C;
+    --tension-consenso:    #27AE60;
+    --tension-neutral:     #95A5A6;
+    --tension-alerta:      #E74C3C;
+    --tension-glow:        rgba(231, 76, 60, 0.4);
+
+    /* --- Tags del detalle --- */
+    --tag-actor-bg:        rgba(44, 62, 80, 0.3);
+    --tag-actor-ink:       #ECF0F1;
+    --tag-evento-bg:       rgba(230, 126, 34, 0.3);
+    --tag-evento-ink:      #E67E22;
+    --tag-afirmacion-bg:   rgba(149, 165, 166, 0.3);
+    --tag-afirmacion-ink:  #95A5A6;
+    --tag-noticia-bg:      rgba(52, 73, 94, 0.3);
+    --tag-noticia-ink:     #34495E;
+
+    /* --- Tipografía --- */
+    --font-ui:             "Inter", system-ui, sans-serif;
+    --font-mono:           "IBM Plex Mono", monospace;
+    --font-size-xs:        11px;
+    --font-size-sm:        12px;
+    --font-size-base:      13px;
+    --font-size-md:        14px;
+    --font-size-lg:        16px;
+    --font-size-xl:        18px;
+
+    /* --- Espaciado --- */
+    --space-xs:            4px;
+    --space-sm:            8px;
+    --space-md:            16px;
+    --space-lg:            24px;
+    --space-xl:            32px;
+
+    /* --- Transiciones --- */
+    --duration-fast:       100ms;
+    --duration-normal:     150ms;
+    --duration-slow:       300ms;
+    --ease-default:        cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* --- Radios del grafo (px) --- */
+    --radius-actor:        12;
+    --radius-evento:       10;
+    --radius-afirmacion:   7;
+    --radius-noticia:      4;
+}

@@ -1,166 +1,122 @@
-# OverStanding (OS)
+# OverStand (OS)
 
-Sistema de inteligencia de fuentes que mapea la arquitectura de la informacion en tiempo real. Su funcion principal es la **triangulacion ontologica**: no busca una "verdad" unica, sino que visualiza las relaciones de consistencia, complemento y contradiccion entre multiples fuentes.
+> *A diferencia de Understand (entender desde abajo) o Outstand (sobresalir), **OverStand** es una posicion cognitiva de dominio: estar encima de la informacion para ver la totalidad de la trama sin ser absorbido por el ruido.*
+
+## El Concepto
+
+En la cultura Rastafari se rechaza "Understand" porque implica sumision: estar *debajo* para conocer. **OverStand** propone elevacion: alcanzar una comprension donde el sujeto no es dominado por la informacion, sino que la domina desde una perspectiva soberana.
+
+**Geometria del conocimiento:**
+- **Understand** (debajo): ver los cimientos, arriesgarse a ser aplastado por la estructura
+- **Outstand** (fuera): sobresalir, pero quedar aislado de la trama
+- **OverStand** (encima): estar en el vertice, ver la totalidad de la red, los flujos y las tensiones
+
+El sistema opera bajo la premisa de que la realidad es un fluido. OverStand es la capacidad de estar en la superficie (la interfaz) viendo simultaneamente lo que ocurre en las profundidades (los datos raw) y como se propagan las ondas (las consecuencias).
+
+## Que hace
+
+- Ingiere noticias de 31 feeds RSS internacionales (BBC, TASS, Al Jazeera, China Daily, Breitbart, Le Monde...)
+- Extrae entidades, afirmaciones y relaciones usando LLMs locales (Ollama)
+- Construye un grafo de conocimiento en Apache AGE (PostgreSQL + Cypher)
+- Visualiza un **egosistema de nodo** navegable: foco din&aacute;mico con 2 grados de separaci&oacute;n
+- Enriquece nodos desde Wikidata con un click
+- Permite editar tipos, aliases y fusionar nodos desde la interfaz
+
+## Stack
+
+| Capa | Tecnolog&iacute;a | Rol |
+|:---|:---|:---|
+| Base de datos | Apache AGE (Docker) | Grafo + SQL h&iacute;brido |
+| IA local | Ollama (nativo) | Extracci&oacute;n ontol&oacute;gica con llama3.1 |
+| Backend | Node.js vanilla | API REST + daemon de ingesta |
+| Frontend | Vanilla JS + D3.js | Grafo egoc&eacute;ntrico, sin frameworks |
+
+## Quick Start
+
+```bash
+# Ver instrucciones completas de instalaci&oacute;n
+cat docs/local-deploy.md
+
+# Resumen r&aacute;pido:
+docker compose up -d          # Levanta Apache AGE
+npm install                    # Dependencias
+node backend/seed.js           # Carga grafo de conocimiento base
+node backend/rss_fetcher.js    # Descarga noticias
+node backend/ingest.js         # Procesa con Ollama
+node backend/api.js            # Abre http://localhost:3000
+```
 
 ## Arquitectura
 
 ```
-                  ┌─────────────────────────────────────┐
-                  │           CAPA DE APLICACION         │
-                  │            (Nativa macOS)            │
-                  │                                      │
-                  │  Node.js (backend)   D3.js (frontend)│
-                  └──────────┬──────────────┬────────────┘
-                             │              │
-                  ┌──────────▼──────────┐   │
-                  │  CAPA DE INTELIGENCIA│   │
-                  │   (Nativa macOS)     │   │
-                  │                      │   │
-                  │  Ollama              │   │
-                  │  ├ Llama 3 (8B)      │   │
-                  │  └ Command R (35B)   │   │
-                  └──────────┬───────────┘   │
-                             │               │
-                  ┌──────────▼───────────────▼───────────┐
-                  │        CAPA DE INFRAESTRUCTURA       │
-                  │              (Docker)                 │
-                  │                                      │
-                  │  Apache AGE (PostgreSQL + Grafos)     │
-                  └──────────────────────────────────────┘
+[RSS Feeds] --> rss_fetcher.js --> /data/raw_news/*.json
+                                        |
+                                   ingest.js + Ollama
+                                        |
+                                  .extraction.json (persistente)
+                                        |
+                                   Apache AGE (grafo)
+                                        |
+                                     api.js
+                                        |
+                                   frontend (D3.js)
 ```
 
-- **Docker** solo para Apache AGE. Compilar la extension en macOS es inestable; Docker encapsula esa complejidad.
-- **Ollama** nativo para aprovechar la Unified Memory Architecture y el Neural Engine del M3.
-- **Node.js** nativo para acceso directo al filesystem (`fs.watch`) y bajo consumo de recursos.
-- **D3.js** vanilla para control total del DOM y animaciones de grafos de alta performance.
-
-## Stack
-
-| Componente | Tecnologia | Razon |
-| :--- | :--- | :--- |
-| Persistencia | Apache AGE (Postgres) | SQL para texto de noticias, Cypher para la red de relaciones |
-| IA Local | Ollama (Llama 3 + Command R) | Inferencia sobre 36GB de RAM unificada del M3 |
-| IA Cloud | Claude 3.5 Sonnet | Arbitraje semantico cuando el Score de Disputa > 0.15 |
-| Ingesta | Node.js (fs.watch) | Daemon que vigila carpetas y procesa archivos al aparecer |
-| Visualizacion | D3.js (Force-Directed) | Nodos se repelen segun nivel de contradiccion |
-| Consultas | OpenCypher | Navegacion del grafo de relaciones entre fuentes |
-
-## Ontologia
-
-El sistema normaliza la realidad en cuatro tipos de nodos:
-
-- **Actor**: Entidad con ID unico en kebab-case (ej: `gobierno-ucrania`)
-- **Afirmacion (Claim)**: El atomo de informacion. Cita textual + autor + timestamp
-- **Evento**: Punto de convergencia donde se vinculan multiples afirmaciones
-- **Noticia**: Contenedor original (URL, medio, fecha)
-
-### Relaciones
-
-| Relacion | Origen | Destino | Descripcion |
-| :--- | :--- | :--- | :--- |
-| `REPORTA` | Noticia | Afirmacion | La noticia es el vehiculo del mensaje |
-| `SOSTIENE` | Afirmacion | Evento | La afirmacion describe que paso |
-| `CONTRADICE` | Afirmacion | Afirmacion | Versiones opuestas del mismo hecho |
-| `INVOLUCRA` | Evento | Actor | Quienes estan en la escena |
-| `UBICADO_EN` | Evento | Lugar | Donde ocurrio |
-
-### Score de Disputa
-
-Cuando las fuentes se dividen sobre un hecho, el sistema calcula:
+## Estructura del proyecto
 
 ```
-Sd = (N_fuentes_A × N_fuentes_B) / N_total²
-```
-
-Si las fuentes estan 50/50, el score es maximo. Si todas coinciden, es 0. Este valor controla la intensidad visual del nodo en el grafo.
-
-## Diccionario de Eventos
-
-El LLM clasifica cada noticia en una de estas categorias para evitar la explosion de sinonimos:
-
-**Poder y Gobernanza**
-`CAMBIO_LIDERAZGO` · `PROMULGACION_NORMA` · `PROTESTA_SOCIAL` · `RUPTURA_DIPLOMATICA`
-
-**Conflicto y Seguridad**
-`ACCION_ARMADA` · `AMENAZA_COERCION` · `INCAUTACION_DETENCION` · `ACUERDO_PAZ`
-
-**Flujos Economicos**
-`ADQUISICION_FUSION` · `SANCION_ECONOMICA` · `LANZAMIENTO_PRODUCTO` · `QUIEBRA_INSOLVENCIA`
-
-**Discurso y Verdad**
-`DECLARACION_PUBLICA` · `DENUNCIA_ACUSACION` · `FILTRACION` · `DESMENTIDO`
-
-Si ninguna aplica, se usa `EVENTO_GENERICO`.
-
-## Pipeline
-
-```
-RSS Feeds ──► rss_fetcher.js ──► /data/raw_news/
-                                       │
-                                       ▼
-                                 ingest.js (fs.watch)
-                                       │
-                            ┌──────────▼──────────┐
-                            │  Ollama (Llama 3)   │
-                            │  Extraccion JSON    │
-                            └──────────┬──────────┘
-                                       │
-                            ┌──────────▼──────────┐
-                            │  Apache AGE         │
-                            │  Busca evento previo│
-                            └──────────┬──────────┘
-                                       │
-                              ¿Contradiccion?
-                              /              \
-                            NO               SI
-                            │                 │
-                         Guardar      ┌───────▼────────┐
-                         nodo         │ Command R / Claude│
-                                      │ Analisis de     │
-                                      │ contradiccion   │
-                                      └───────┬────────┘
-                                              │
-                                     Crear arista
-                                     CONTRADICE
-```
-
-1. **Captura**: `rss_fetcher.js` lee `data/sources/feeds.csv`, descarga titulares y los guarda en `/data/raw_news/`
-2. **Analisis**: `ingest.js` detecta el archivo, pide a Llama 3 (Ollama) el JSON ontologico
-3. **Cruce**: Busca en el grafo si ese hecho ya existe en una ventana temporal similar
-4. **Tension**: Si hay version contradictoria, Command R o Claude analiza la friccion y crea la arista `[:CONTRADICE]`
-5. **Visualizacion**: `localhost` muestra el grafo D3 con nodos parpadeando segun su nivel de disputa
-
-## Estructura de Archivos
-
-```
-overstanding/
-├── docker-compose.yml          # Levanta Apache AGE
-├── data/
-│   ├── db/                     # Datos de Postgres (persistentes, fuera de Docker)
-│   ├── raw_news/               # Noticias descargadas para procesar
-│   └── sources/
-│       └── feeds.csv           # Base de feeds RSS (33 fuentes curadas)
+/OverStand
 ├── backend/
-│   ├── ingest.js               # Daemon: fs.watch + Ollama + Cypher/SQL
-│   ├── rss_fetcher.js          # Recolector de feeds internacionales
-│   └── api.js                  # Servidor HTTP vanilla para alimentar D3
-└── frontend/
-    ├── index.html              # Contenedor SVG para D3.js
-    ├── app.js                  # Motor de fuerzas, drags y visualizacion
-    └── styles.css              # Estetica de sala de guerra informativa
+│   ├── api.js              # Servidor HTTP + API REST
+│   ├── ingest.js           # Daemon: Ollama extraccion -> grafo
+│   ├── ingest-runner.sh    # Wrapper resiliente para ingesta continua
+│   ├── rss_fetcher.js      # Descarga RSS a JSON
+│   └── seed.js             # Carga grafo de conocimiento base
+├── frontend/
+│   ├── index.html          # UI principal
+│   ├── app.js              # Motor D3.js egoc&eacute;ntrico
+│   ├── i18n.js             # Traducciones ES/EN
+│   └── css/
+│       ├── variables.css   # Tokens sem&aacute;nticos
+│       ├── layout.css      # Shell, header, split-view
+│       ├── graph.css       # Animaciones del grafo
+│       └── detail.css      # Panel de detalle
+├── data/
+│   ├── schema.json         # Ontolog&iacute;a (fuente de verdad)
+│   ├── aliases.json        # Normalizaci&oacute;n de entidades
+│   ├── seed-knowledge.json # Grafo base de sentido com&uacute;n
+│   ├── sources/feeds.csv   # 31 feeds RSS curados
+│   └── raw_news/           # Noticias crudas + extracciones
+├── docs/
+│   └── local-deploy.md     # Gu&iacute;a de instalaci&oacute;n local
+├── docker-compose.yml
+├── backlog.md
+└── package.json
 ```
 
-## Fuentes
+## Ontolog&iacute;a
 
-La base incluye 33 feeds RSS curados en `data/sources/feeds.csv`, equilibrados por:
+Definida en `data/schema.json`:
 
-- **Geografia**: UK, US, Qatar, Alemania, China, Israel, Rusia, Ucrania, Francia, Australia, Japon, India, Argentina
-- **Propiedad**: servicio publico, agencia estatal, medio comercial, independiente, partisan
-- **Espectro ideologico**: desde Breitbart (derecha) hasta Jacobin (socialista), pasando por BBC, AP, DW (centro)
+**Nodos:** Actor, Evento, Afirmaci&oacute;n, Noticia
+**Aristas:** REPORTA, INVOLUCRA, SOSTIENE, PARTICIPA, UBICADO_EN, PERTENECE_A, CAUSA, CONTRADICE, COMPLEMENTA, DESMIENTE, ACTUALIZA
+**17 tipos de evento:** desde CAMBIO_LIDERAZGO hasta EVENTO_GENERICO
 
-## Requisitos
+## Interfaz
 
-- macOS con Apple Silicon (M3)
-- Docker Desktop
-- Ollama (con Llama 3 y Command R descargados)
-- Node.js 20+
+- **Vista Nodes:** Grafo de fuerza con colores por tipo (azul=persona, verde=lugar, naranja=organizaci&oacute;n)
+- **Vista Titles:** Tipograf&iacute;a como nodos con collision de bounding box
+- **Panel de detalle:** Tipo editable, aliases, merge, delete, noticias vinculadas, enriquecimiento Wikidata
+- **Breadcrumbs sem&aacute;nticos:** Muestra la arista entre nodos navegados
+- **Buscador:** Autocompletado con dot de color por tipo
+- **i18n:** ES/EN con browser detect
+
+## Documentaci&oacute;n
+
+- [`docs/local-deploy.md`](docs/local-deploy.md) — Instalaci&oacute;n y configuraci&oacute;n local
+- [`backlog.md`](backlog.md) — Roadmap y estado del proyecto
+- [`data/schema.json`](data/schema.json) — Ontolog&iacute;a auditable
+
+## Licencia
+
+ISC

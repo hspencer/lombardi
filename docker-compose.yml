@@ -10,7 +10,7 @@ services:
       - POSTGRES_PASSWORD=overstanding_pass
       - POSTGRES_DB=overstanding
     volumes:
-      - ./data/db:/var/lib/postgresql/data
+      - ./data/db:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U os_admin -d overstanding"]
       interval: 10s

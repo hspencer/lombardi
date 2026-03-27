@@ -1,0 +1,370 @@
+{
+  "$schema": "Diccionario de normalización de entidades para OverStand",
+  "version": "1.0.0",
+  "description": "Mapea variantes de nombres a un ID canónico. Se consulta en cada ingesta para evitar nodos duplicados en el grafo. Editable manualmente o por el sistema.",
+  "updated_at": "2026-03-27",
+  "entities": {
+    "donald-trump": {
+      "canonical": "Donald Trump",
+      "type": "Person",
+      "aliases": [
+        "Trump",
+        "President Trump",
+        "Donald J. Trump",
+        "DJT",
+        "el presidente Trump",
+        "presidente estadounidense",
+        "the US president"
+      ]
+    },
+    "volodymyr-zelensky": {
+      "canonical": "Volodymyr Zelensky",
+      "type": "Person",
+      "aliases": [
+        "Zelensky",
+        "Zelenskyy",
+        "Zelenskiy",
+        "presidente ucraniano",
+        "el presidente de Ucrania"
+      ]
+    },
+    "kim-jong-un": {
+      "canonical": "Kim Jong Un",
+      "type": "Person",
+      "aliases": [
+        "Kim Jong-un",
+        "Kim",
+        "líder norcoreano",
+        "el líder de Corea del Norte"
+      ]
+    },
+    "nicolas-maduro": {
+      "canonical": "Nicolás Maduro",
+      "type": "Person",
+      "aliases": [
+        "Maduro",
+        "Nicolas Maduro",
+        "presidente venezolano"
+      ]
+    },
+    "benjamin-netanyahu": {
+      "canonical": "Benjamin Netanyahu",
+      "type": "Person",
+      "aliases": [
+        "Netanyahu",
+        "Bibi",
+        "primer ministro israelí",
+        "PM israelí"
+      ]
+    },
+    "estados-unidos": {
+      "canonical": "Estados Unidos",
+      "type": "Location",
+      "aliases": [
+        "EE.UU.",
+        "EEUU",
+        "USA",
+        "US",
+        "United States",
+        "the United States",
+        "the US",
+        "America",
+        "Washington"
+      ]
+    },
+    "rusia": {
+      "canonical": "Rusia",
+      "type": "Location",
+      "aliases": [
+        "Russia",
+        "Russian Federation",
+        "Moscú",
+        "Moscow",
+        "the Kremlin"
+      ]
+    },
+    "ucrania": {
+      "canonical": "Ucrania",
+      "type": "Location",
+      "aliases": [
+        "Ukraine",
+        "Kiev",
+        "Kyiv"
+      ]
+    },
+    "china": {
+      "canonical": "China",
+      "type": "Location",
+      "aliases": [
+        "PRC",
+        "People's Republic of China",
+        "Beijing",
+        "Pekín"
+      ]
+    },
+    "iran": {
+      "canonical": "Irán",
+      "type": "Location",
+      "aliases": [
+        "Iran",
+        "Islamic Republic of Iran",
+        "Teherán",
+        "Tehran"
+      ]
+    },
+    "israel": {
+      "canonical": "Israel",
+      "type": "Location",
+      "aliases": [
+        "Estado de Israel",
+        "Tel Aviv",
+        "Jerusalem",
+        "Jerusalén"
+      ]
+    },
+    "union-europea": {
+      "canonical": "Unión Europea",
+      "type": "Organization",
+      "aliases": [
+        "EU",
+        "UE",
+        "European Union",
+        "Bruselas",
+        "Brussels",
+        "the EU"
+      ]
+    },
+    "otan": {
+      "canonical": "OTAN",
+      "type": "Organization",
+      "aliases": [
+        "NATO",
+        "la Alianza Atlántica",
+        "North Atlantic Treaty Organization"
+      ]
+    },
+    "onu": {
+      "canonical": "ONU",
+      "type": "Organization",
+      "aliases": [
+        "UN",
+        "United Nations",
+        "Naciones Unidas"
+      ]
+    },
+    "gobierno-ucrania": {
+      "canonical": "Gobierno de Ucrania",
+      "type": "Organization",
+      "aliases": [
+        "Ukrainian government",
+        "Ukraine's government",
+        "Kyiv government",
+        "gobierno ucraniano"
+      ]
+    },
+    "gobierno-rusia": {
+      "canonical": "Gobierno de Rusia",
+      "type": "Organization",
+      "aliases": [
+        "Russian government",
+        "Russia's government",
+        "Moscow government",
+        "gobierno ruso",
+        "el Kremlin"
+      ]
+    },
+    "uk-gobierno": {
+      "canonical": "Gobierno del Reino Unido",
+      "type": "Organization",
+      "aliases": [
+        "UK government"
+      ]
+    },
+    "joe-biden": {
+      "canonical": "Joe Biden",
+      "type": "Person",
+      "aliases": []
+    },
+    "xi-jinping": {
+      "canonical": "Xi Jinping",
+      "type": "Person",
+      "aliases": []
+    },
+    "emmanuel-macron": {
+      "canonical": "Emmanuel Macron",
+      "type": "Person",
+      "aliases": []
+    },
+    "olaf-scholz": {
+      "canonical": "Olaf Scholz",
+      "type": "Person",
+      "aliases": []
+    },
+    "keir-starmer": {
+      "canonical": "Keir Starmer",
+      "type": "Person",
+      "aliases": []
+    },
+    "narendra-modi": {
+      "canonical": "Narendra Modi",
+      "type": "Person",
+      "aliases": []
+    },
+    "ali-khamenei": {
+      "canonical": "Ali Khamenei",
+      "type": "Person",
+      "aliases": []
+    },
+    "recep-erdogan": {
+      "canonical": "Recep Tayyip Erdogan",
+      "type": "Person",
+      "aliases": []
+    },
+    "gustavo-petro": {
+      "canonical": "Gustavo Petro",
+      "type": "Person",
+      "aliases": []
+    },
+    "gabriel-boric": {
+      "canonical": "Gabriel Boric",
+      "type": "Person",
+      "aliases": []
+    },
+    "lula-da-silva": {
+      "canonical": "Lula da Silva",
+      "type": "Person",
+      "aliases": []
+    },
+    "javier-milei": {
+      "canonical": "Javier Milei",
+      "type": "Person",
+      "aliases": []
+    },
+    "venezuela": {
+      "canonical": "Venezuela",
+      "type": "Location",
+      "aliases": []
+    },
+    "corea-del-norte": {
+      "canonical": "Corea del Norte",
+      "type": "Location",
+      "aliases": []
+    },
+    "francia": {
+      "canonical": "Francia",
+      "type": "Location",
+      "aliases": []
+    },
+    "alemania": {
+      "canonical": "Alemania",
+      "type": "Location",
+      "aliases": []
+    },
+    "reino-unido": {
+      "canonical": "Reino Unido",
+      "type": "Location",
+      "aliases": []
+    },
+    "india": {
+      "canonical": "India",
+      "type": "Location",
+      "aliases": []
+    },
+    "turquia": {
+      "canonical": "Turquía",
+      "type": "Location",
+      "aliases": []
+    },
+    "colombia": {
+      "canonical": "Colombia",
+      "type": "Location",
+      "aliases": []
+    },
+    "chile": {
+      "canonical": "Chile",
+      "type": "Location",
+      "aliases": []
+    },
+    "brasil": {
+      "canonical": "Brasil",
+      "type": "Location",
+      "aliases": []
+    },
+    "argentina": {
+      "canonical": "Argentina",
+      "type": "Location",
+      "aliases": []
+    },
+    "palestina": {
+      "canonical": "Palestina",
+      "type": "Location",
+      "aliases": []
+    },
+    "gaza": {
+      "canonical": "Gaza",
+      "type": "Location",
+      "aliases": []
+    },
+    "taiwan": {
+      "canonical": "Taiwán",
+      "type": "Location",
+      "aliases": []
+    },
+    "siria": {
+      "canonical": "Siria",
+      "type": "Location",
+      "aliases": []
+    },
+    "libano": {
+      "canonical": "Líbano",
+      "type": "Location",
+      "aliases": []
+    },
+    "hamas": {
+      "canonical": "Hamás",
+      "type": "Organization",
+      "aliases": []
+    },
+    "hezbollah": {
+      "canonical": "Hezbolá",
+      "type": "Organization",
+      "aliases": []
+    },
+    "pentagonoo": {
+      "canonical": "Pentágono",
+      "type": "Organization",
+      "aliases": []
+    },
+    "kremlin": {
+      "canonical": "Kremlin",
+      "type": "Organization",
+      "aliases": []
+    },
+    "brics": {
+      "canonical": "BRICS",
+      "type": "Organization",
+      "aliases": []
+    },
+    "fmi": {
+      "canonical": "FMI",
+      "type": "Organization",
+      "aliases": []
+    },
+    "opep": {
+      "canonical": "OPEP",
+      "type": "Organization",
+      "aliases": []
+    },
+    "presidente-de-la-federacion": {
+      "canonical": "Vladimir Putin",
+      "type": "Person",
+      "aliases": [
+        "Putin",
+        "presidente ruso",
+        "el presidente de Rusia",
+        "el Kremlin",
+        "vladimir-putin"
+      ]
+    }
+  }
+}

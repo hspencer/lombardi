@@ -1,5 +1,7 @@
 node_modules/
 data/db/
 data/raw_news/
+data/.process_queue.json
 .env
 .DS_Store
+.claude/
