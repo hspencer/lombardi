@@ -1,0 +1,22 @@
+services:
+  age-db:
+    image: apache/age:latest
+    container_name: os_database
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=os_admin
+      - POSTGRES_PASSWORD=overstanding_pass
+      - POSTGRES_DB=overstanding
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U os_admin -d overstanding"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  default:
+    name: os_network

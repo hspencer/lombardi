@@ -1,0 +1,15 @@
+{
+  "name": "overstanding",
+  "version": "0.1.0",
+  "description": "Triangulacion ontologica de fuentes de noticias globales",
+  "scripts": {
+    "fetch": "node backend/rss_fetcher.js",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "csv-parser": "^3.2.0",
+    "fast-xml-parser": "^5.5.9"
+  }
+}

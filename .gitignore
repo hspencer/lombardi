@@ -1,0 +1,5 @@
+node_modules/
+data/db/
+data/raw_news/
+.env
+.DS_Store
