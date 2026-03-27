@@ -75,12 +75,36 @@ El grafo debe comportarse como un organismo vivo: lo que no se usa o pierde rele
 - [ ] **Garbage Collector (Daemon Nocturno)** — Script de Node que corre limpieza Cypher diaria: elimina noticias >30 días sin disputa, nodos huérfanos, aristas muertas. Objetivo: queries Cypher <100ms en M3.
 - [ ] **Grafo Fantasma (Lazy Loading de Wikidata)** — Al ingerir solo guardar ID+nombre. Detalles se traen solo al hacer Click (Foco). Al cerrar sesión, si el nodo no es "core", limpiar detalles pesados y dejar solo el ID.
 
+### Interacciones de Soberania Informativa
+
+El usuario no consume una lista; habita un nodo. El cambio de foco reconfigura la ontologia visible.
+
+**Afirmacion (el atomo de la disputa):**
+- [ ] **Triangular (Cross-Check)** — Click en afirmacion resalta otras afirmaciones del mismo Evento desde fuentes opuestas (Xinhua vs BBC).
+- [ ] **Rastrear linaje (Ancestry)** — Linea de tiempo con aristas ACTUALIZA: como la narrativa cambio con las horas.
+- [ ] **Evaluar tension (Sd)** — "Ver Friccion": mapa de calor de fuentes que sostienen vs desmienten.
+- [ ] **Evidencia raw** — Acceso al texto original en idioma de la fuente para verificar alucinaciones de la IA.
+
+**Actor (la red de poder):**
+- [x] ~~Mapa de influencia~~ — Parcialmente implementado: egosistema ya muestra radio de impacto del actor.
+- [ ] **Contradiccion historica** — Buscar en archivo: cuando este actor dijo lo contrario a lo que dice hoy.
+- [x] ~~Conexion de sentido comun~~ — Implementado via Wikidata enrichment.
+
+**Foco (navegacion tactica):**
+- [x] ~~Pivot~~ — Doble click recentra. Implementado.
+- [ ] **Filtrar por burbuja** — "Ver el mundo segun [Fuente X]": atenuar todo lo que esa fuente no reporto.
+- [ ] **Forecast Mode** — Animar aristas CAUSA: como un evento pasado "empujo" al actual.
+
+**Accion cognitiva:**
+- [ ] **El Contrastador** — Seleccionar 2 afirmaciones contradictorias y pedir a Ollama: "Genera reporte de la brecha" (no dice quien tiene razon, analiza omisiones y sesgos).
+- [ ] **Runners alternativos** — OpenAI API y Gemini API como backends de extraccion ademas de Ollama.
+
 ### Baja prioridad
 
-- [ ] **README actualizado** — Reflejar el estado real del proyecto.
-- [ ] **Commit inicial limpio** — `.gitignore` revisado, sin datos sensibles.
+- [x] ~~README actualizado~~ ✓
+- [x] ~~Commit inicial limpio~~ ✓
+- [x] ~~Breadcrumbs semanticos~~ ✓
 - [ ] **Filtros en el grafo** — Por tipo de evento, fuente, fecha.
-- [ ] **Export PNG del grafo** — Botón para descargar vista actual.
+- [ ] **Export PNG del grafo** — Boton para descargar vista actual.
 - [ ] **3D mode** — Vista Three.js alternativa (como constel-db).
-- [ ] **Detección de clusters** — Agrupar visualmente nodos por tema/región.
-- [ ] **Breadcrumbs semánticos** — Mostrar aristas entre nodos en el breadcrumb como frase legible (ej: "Francia —pertenece a→ OTAN › Venezuela").
+- [ ] **Deteccion de clusters** — Agrupar visualmente nodos por tema/region.
