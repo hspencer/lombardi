@@ -2,124 +2,74 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 
-// --- Configuracion ---
+// --- Config ---
 
 const RAW_DIR = path.join(__dirname, '../data/raw_news');
-const PROCESSED_DIR = path.join(__dirname, '../data/raw_news/.processed');
+const PROCESSED_DIR = path.join(RAW_DIR, '.processed');
 const SCHEMA_PATH = path.join(__dirname, '../data/schema.json');
 const ALIASES_PATH = path.join(__dirname, '../data/aliases.json');
 const OLLAMA_URL = 'http://localhost:11434/api/generate';
 
-// Cargar schema como fuente de verdad
 const schema = JSON.parse(fs.readFileSync(SCHEMA_PATH, 'utf-8'));
-const EVENT_DICTIONARY = schema.event_types.map(e => e.id);
+const EVENT_TYPES = schema.event_types.map(e => e.id);
 const EXTRACTOR_MODEL = schema.extraction.models.extractor.model;
 const ENTITY_TYPES = schema.graph.nodes.Actor.properties.type.enum;
 
-// Cargar diccionario de aliases
+// --- Aliases ---
+
 function loadAliases() {
     const raw = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
-    const lookup = new Map(); // alias (lowercase) → canonical id
+    const lookup = new Map();
     for (const [id, entry] of Object.entries(raw.entities)) {
-        // El canonical name también es un alias de sí mismo
         lookup.set(entry.canonical.toLowerCase(), id);
-        lookup.set(id, id); // el propio ID
-        for (const alias of entry.aliases) {
-            lookup.set(alias.toLowerCase(), id);
-        }
+        lookup.set(id, id);
+        for (const alias of entry.aliases) lookup.set(alias.toLowerCase(), id);
     }
     return { lookup, entities: raw.entities };
 }
 
 let aliasData = loadAliases();
 
-function resolveEntity(entity) {
-    // Buscar por nombre o id en el diccionario
-    const key = (entity.name || entity.id || '').toLowerCase();
-    const idKey = (entity.id || '').toLowerCase();
-    const canonicalId = aliasData.lookup.get(key) || aliasData.lookup.get(idKey);
-
-    if (canonicalId && aliasData.entities[canonicalId]) {
-        const canonical = aliasData.entities[canonicalId];
-        return {
-            id: canonicalId,
-            name: canonical.canonical,
-            type: canonical.type || entity.type
-        };
-    }
-    return entity; // No match, devolver tal cual
+function resolveId(name) {
+    return aliasData.lookup.get((name || '').toLowerCase()) || null;
 }
 
-function resolveExtraction(extraction) {
-    // Resolver entidades
-    extraction.entities = (extraction.entities || []).map(resolveEntity);
+// --- Prompt ---
 
-    // Deduplicar entidades por id (post-merge)
-    const seen = new Map();
-    extraction.entities = extraction.entities.filter(e => {
-        if (seen.has(e.id)) return false;
-        seen.set(e.id, true);
-        return true;
-    });
-
-    // Resolver subject/object en claims
-    extraction.claims = (extraction.claims || []).map(claim => {
-        const subKey = (claim.subject || '').toLowerCase();
-        const objKey = (claim.object || '').toLowerCase();
-        return {
-            ...claim,
-            subject: aliasData.lookup.get(subKey) || claim.subject,
-            object: aliasData.lookup.get(objKey) || claim.object
-        };
-    });
-
-    // Resolver entity_relations
-    extraction.entity_relations = (extraction.entity_relations || []).map(rel => ({
-        ...rel,
-        source: aliasData.lookup.get((rel.source || '').toLowerCase()) || rel.source,
-        target: aliasData.lookup.get((rel.target || '').toLowerCase()) || rel.target
-    }));
-
-    return extraction;
-}
-
-function buildExtractionPrompt() {
+function buildPrompt() {
     const rules = schema.extraction.rules.map((r, i) => `${i + 1}. ${r}`).join('\n');
-    const eventList = EVENT_DICTIONARY.join(', ');
-    const entityTypes = ENTITY_TYPES.join('|');
     const lang = schema.extraction.output_language || 'es';
 
-    return `You are an ontological news analyst for OverStand (OS). Extract atomic facts from the news item below.
-OUTPUT LANGUAGE: ${lang} (all predicates and generic entity names MUST be in this language)
+    return `You are an ontological news analyst for OverStand. Extract structured facts.
+OUTPUT LANGUAGE: ${lang}
 
 RULES:
 ${rules}
 
-EVENT TYPES: ${eventList}
-ENTITY TYPES: ${entityTypes}
+EVENT TYPES: ${EVENT_TYPES.join(', ')}
+ENTITY TYPES: ${ENTITY_TYPES.join(', ')}
 
-Respond with ONLY valid JSON, no markdown, no explanation:
+Respond with ONLY valid JSON, no markdown:
 {
   "event": {
-    "id": "kebab-case-descriptivo (ej: ataque-iran-israel-2026)",
-    "name": "Nombre breve del evento en español",
+    "id": "kebab-case-descriptivo",
+    "name": "Nombre del evento en español",
     "event_type": "EVENT_TYPE",
-    "date": "YYYY-MM-DD o null si no se puede determinar"
+    "date": "YYYY-MM-DD o null",
+    "is_disputed": false,
+    "evidence_quote": "cita en idioma original"
   },
-  "entities": [
-    {"id": "kebab-case-id", "name": "Nombre (propios intactos)", "type": "${entityTypes}", "desc": "descriptor breve en español"}
-  ],
-  "entity_relations": [
-    {"source": "entity-id", "relation": "PARTICIPA|UBICADO_EN|PERTENECE_A", "target": "entity-id"}
-  ],
-  "claims": [
+  "actors": [
     {
-      "subject": "entity-id",
-      "predicate": "verbo en español",
-      "object": "entity-id o valor",
-      "is_disputed": false,
-      "evidence_quote": "cita textual en idioma original de la fuente"
+      "id": "kebab-case",
+      "name": "Nombre",
+      "type": "Person|Organization|Location|Object",
+      "description": "descriptor breve en español",
+      "role": "verbo en español que describe su participación en el evento"
     }
+  ],
+  "actor_relations": [
+    {"source": "actor-id", "relation": "PERTENECE_A|UBICADO_EN", "target": "actor-id"}
   ]
 }
 
@@ -127,40 +77,35 @@ NEWS ITEM:
 `;
 }
 
-const EXTRACTION_PROMPT = buildExtractionPrompt();
+const PROMPT = buildPrompt();
 
 // --- Database ---
 
 const pool = new Pool({
-    host: 'localhost',
-    port: 5432,
-    database: 'overstanding',
-    user: 'os_admin',
-    password: 'overstanding_pass'
+    host: 'localhost', port: 5432, database: 'overstanding',
+    user: 'os_admin', password: 'overstanding_pass'
 });
+
+function esc(str) {
+    if (!str) return '';
+    return String(str).slice(0, 500).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\$/g, '').replace(/[\r\n]+/g, ' ');
+}
 
 async function initDB() {
     const client = await pool.connect();
     try {
-        await client.query("LOAD 'age'");
-        await client.query("SET search_path = ag_catalog, public");
-
-        // Crear tabla SQL para el texto completo de noticias (Full Text Search)
         await client.query(`
             CREATE TABLE IF NOT EXISTS news_raw (
-                id SERIAL PRIMARY KEY,
-                source_name TEXT,
-                source_lang TEXT,
-                source_region TEXT,
-                title TEXT,
-                link TEXT UNIQUE,
-                description TEXT,
-                pub_date TEXT,
-                ingested_at TIMESTAMPTZ DEFAULT NOW(),
-                processed BOOLEAN DEFAULT FALSE
+                id SERIAL PRIMARY KEY, source_name TEXT, source_lang TEXT, source_region TEXT,
+                title TEXT, link TEXT UNIQUE, description TEXT, pub_date TEXT,
+                ingested_at TIMESTAMPTZ DEFAULT NOW(), processed BOOLEAN DEFAULT FALSE
             )
         `);
-        console.log('OS: Base de datos inicializada.');
+        await client.query("LOAD 'age'");
+        await client.query("SET search_path = ag_catalog, public");
+        // Ensure graph exists
+        await client.query("SELECT create_graph('overstanding')").catch(() => {});
+        console.log('OS: DB inicializada.');
     } finally {
         client.release();
     }
@@ -168,16 +113,16 @@ async function initDB() {
 
 // --- Ollama ---
 
-async function extractWithOllama(newsItem) {
+async function extract(newsItem) {
     const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name} (${newsItem.source_lang})\nDescription: ${newsItem.description}`;
 
     const response = await fetch(OLLAMA_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(120000), // 2 min timeout
+        signal: AbortSignal.timeout(120000),
         body: JSON.stringify({
             model: EXTRACTOR_MODEL,
-            prompt: EXTRACTION_PROMPT + input,
+            prompt: PROMPT + input,
             stream: false,
             options: { temperature: 0.1 }
         })
@@ -185,239 +130,167 @@ async function extractWithOllama(newsItem) {
 
     const data = await response.json();
     const raw = data.response.trim();
-
-    // Intentar parsear JSON limpiando posibles artefactos
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Ollama no devolvio JSON valido');
-
     return JSON.parse(jsonMatch[0]);
 }
 
-// --- Graph Writing ---
+// --- Resolve aliases ---
+
+function resolve(extraction) {
+    // Resolve actor IDs
+    extraction.actors = (extraction.actors || []).map(a => {
+        const canonical = resolveId(a.name) || resolveId(a.id);
+        if (canonical && aliasData.entities[canonical]) {
+            return { ...a, id: canonical, name: aliasData.entities[canonical].canonical };
+        }
+        return a;
+    });
+
+    // Dedup actors
+    const seen = new Map();
+    extraction.actors = extraction.actors.filter(a => {
+        if (seen.has(a.id)) return false;
+        seen.set(a.id, true);
+        return true;
+    });
+
+    // Resolve actor_relations
+    extraction.actor_relations = (extraction.actor_relations || []).map(r => ({
+        ...r,
+        source: resolveId(r.source) || r.source,
+        target: resolveId(r.target) || r.target
+    }));
+
+    return extraction;
+}
+
+// --- Write to Graph ---
 
 async function writeToGraph(client, newsItem, extraction) {
-    // 1. Guardar noticia en tabla SQL (full text)
-    await client.query(`
-        INSERT INTO news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-        ON CONFLICT (link) DO UPDATE SET processed = true
-    `, [
-        newsItem.source_name,
-        newsItem.source_lang,
-        newsItem.source_region || '',
-        newsItem.title,
-        newsItem.link,
-        newsItem.description,
-        newsItem.pub_date
-    ]);
+    const evt = extraction.event;
+    if (!evt || !evt.id) return;
 
-    // 2. Crear nodos de entidades en el grafo (con descriptor)
-    for (const entity of extraction.entities) {
-        try {
-            await client.query(`
-                SELECT * FROM cypher('overstanding', $$
-                    MERGE (a:Actor {id: '${esc(entity.id)}'})
-                    SET a.name = '${esc(entity.name)}', a.type = '${esc(entity.type)}', a.description = '${esc(entity.desc || '')}'
-                    RETURN a
-                $$) as (a agtype)
-            `);
-        } catch (err) {
-            console.error(`      [Actor] ${entity.id}: ${err.message.slice(0, 80)}`);
-        }
-    }
-
-    // 2b. Crear relaciones implícitas entre entidades (entity_relations)
-    const VALID_RELATIONS = ['PARTICIPA', 'UBICADO_EN', 'PERTENECE_A'];
-    for (const rel of (extraction.entity_relations || [])) {
-        if (!rel.source || !rel.target || !rel.relation) continue;
-        const relType = String(rel.relation).toUpperCase().replace(/[^A-Z_]/g, '');
-        if (!VALID_RELATIONS.includes(relType)) continue;
-
-        // AGE requiere labels estáticos — usamos queries por tipo
-        const queries = {
-            PARTICIPA:    `MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'}) MERGE (a)-[:PARTICIPA]->(b) RETURN a, b`,
-            UBICADO_EN:   `MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'}) MERGE (a)-[:UBICADO_EN]->(b) RETURN a, b`,
-            PERTENECE_A:  `MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'}) MERGE (a)-[:PERTENECE_A]->(b) RETURN a, b`
-        };
-
-        await client.query(`
-            SELECT * FROM cypher('overstanding', $$ ${queries[relType]} $$) as (a agtype, b agtype)
-        `).catch(() => {});
-    }
-
-    // 3. Crear nodo de Evento (si existe en la extracción)
-    const eventNode = extraction.event;
-    if (eventNode && eventNode.id) {
-        try {
-            await client.query(`
-                SELECT * FROM cypher('overstanding', $$
-                    MERGE (e:Evento {id: '${esc(eventNode.id)}'})
-                    SET e.name = '${esc(eventNode.name || '')}',
-                        e.event_type = '${esc(eventNode.event_type || '')}',
-                        e.date = '${esc(eventNode.date || '')}'
-                    RETURN e
-                $$) as (e agtype)
-            `);
-
-            // Vincular cada Actor con el Evento via PARTICIPA
-            for (const entity of extraction.entities) {
-                await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
-                        MATCH (a:Actor {id: '${esc(entity.id)}'}), (e:Evento {id: '${esc(eventNode.id)}'})
-                        MERGE (a)-[:PARTICIPA]->(e)
-                        RETURN a, e
-                    $$) as (a agtype, e agtype)
-                `).catch(() => {});
-            }
-        } catch (err) {
-            console.error(`      [Evento] ${err.message.slice(0, 80)}`);
-        }
-    }
-
-    // 4. Crear nodo de Noticia en el grafo
-    const newsId = Buffer.from(newsItem.link).toString('base64').slice(0, 20);
+    // 1. Create Evento node
     try {
         await client.query(`
             SELECT * FROM cypher('overstanding', $$
-                MERGE (n:Noticia {id: '${esc(newsId)}'})
-                SET n.title = '${esc(newsItem.title)}',
-                    n.source = '${esc(newsItem.source_name)}',
-                    n.link = '${esc(newsItem.link)}',
-                    n.lang = '${esc(newsItem.source_lang)}'
-                RETURN n
-            $$) as (n agtype)
+                MERGE (e:Evento {id: '${esc(evt.id)}'})
+                SET e.name = '${esc(evt.name)}',
+                    e.event_type = '${esc(evt.event_type)}',
+                    e.date = '${esc(evt.date || '')}',
+                    e.is_disputed = ${evt.is_disputed || false},
+                    e.evidence_quote = '${esc(evt.evidence_quote || '')}',
+                    e.source = '${esc(newsItem.source_name)}',
+                    e.source_url = '${esc(newsItem.link)}'
+                RETURN e
+            $$) as (e agtype)
         `);
     } catch (err) {
-        console.error(`      [Noticia] ${err.message.slice(0, 80)}`);
+        console.error(`      [Evento] ${err.message.slice(0, 80)}`);
+        return; // Si falla el evento, no tiene sentido seguir
     }
 
-    // 4. Crear nodos de Afirmacion y relaciones
-    for (let i = 0; i < extraction.claims.length; i++) {
-        const claim = extraction.claims[i];
-        const claimId = `${newsId}-c${i}`;
-
+    // 2. Create Actor nodes + PARTICIPA edges
+    for (const actor of extraction.actors) {
         try {
-            // Crear Afirmacion
             await client.query(`
                 SELECT * FROM cypher('overstanding', $$
-                    MERGE (c:Afirmacion {id: '${esc(claimId)}'})
-                    SET c.subject = '${esc(claim.subject)}',
-                        c.predicate = '${esc(claim.predicate)}',
-                        c.object = '${esc(claim.object)}',
-                        c.is_disputed = ${claim.is_disputed || false},
-                        c.evidence_quote = '${esc(claim.evidence_quote || '')}',
-                        c.event_type = '${esc(extraction.event?.event_type || extraction.event_type || '')}'
-                    RETURN c
-                $$) as (c agtype)
+                    MERGE (a:Actor {id: '${esc(actor.id)}'})
+                    SET a.name = '${esc(actor.name)}',
+                        a.type = '${esc(actor.type)}',
+                        a.description = '${esc(actor.description || '')}'
+                    RETURN a
+                $$) as (a agtype)
             `);
 
-            // Afirmacion -[:SOSTIENE]-> Evento
-            if (eventNode?.id) {
-                await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
-                        MATCH (c:Afirmacion {id: '${esc(claimId)}'}), (e:Evento {id: '${esc(eventNode.id)}'})
-                        MERGE (c)-[:SOSTIENE]->(e)
-                        RETURN c, e
-                    $$) as (c agtype, e agtype)
-                `).catch(() => {});
-            }
-
-            // Noticia -[:REPORTA]-> Afirmacion
+            // PARTICIPA edge with role as metadata
             await client.query(`
                 SELECT * FROM cypher('overstanding', $$
-                    MATCH (n:Noticia {id: '${esc(newsId)}'}), (c:Afirmacion {id: '${esc(claimId)}'})
-                    MERGE (n)-[:REPORTA]->(c)
-                    RETURN n, c
-                $$) as (n agtype, c agtype)
+                    MATCH (a:Actor {id: '${esc(actor.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                    MERGE (a)-[r:PARTICIPA]->(e)
+                    SET r.role = '${esc(actor.role || '')}'
+                    RETURN a, e
+                $$) as (a agtype, e agtype)
             `);
-
-            // Afirmacion -[:INVOLUCRA]-> Actor (subject y object)
-            for (const entityId of [claim.subject, claim.object]) {
-                if (!entityId) continue;
-                await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
-                        MATCH (c:Afirmacion {id: '${esc(claimId)}'}), (a:Actor {id: '${esc(entityId)}'})
-                        MERGE (c)-[:INVOLUCRA]->(a)
-                        RETURN c, a
-                    $$) as (c agtype, a agtype)
-                `).catch(() => {});
-            }
         } catch (err) {
-            console.error(`      [Claim ${i}] ${err.message.slice(0, 80)}`);
+            console.error(`      [Actor] ${actor.id}: ${err.message.slice(0, 60)}`);
         }
     }
+
+    // 3. Actor-Actor structural relations
+    const VALID_RELS = { PERTENECE_A: true, UBICADO_EN: true };
+    for (const rel of (extraction.actor_relations || [])) {
+        const relType = String(rel.relation || '').toUpperCase().replace(/[^A-Z_]/g, '');
+        if (!VALID_RELS[relType]) continue;
+        try {
+            const q = relType === 'PERTENECE_A'
+                ? `MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'}) MERGE (a)-[:PERTENECE_A]->(b) RETURN a, b`
+                : `MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'}) MERGE (a)-[:UBICADO_EN]->(b) RETURN a, b`;
+            await client.query(`SELECT * FROM cypher('overstanding', $$ ${q} $$) as (a agtype, b agtype)`);
+        } catch {}
+    }
 }
 
-// Sanitizar string para Cypher dentro de comillas simples en $$ blocks
-function esc(str) {
-    if (!str) return '';
-    return String(str)
-        .slice(0, 500)          // Limitar longitud
-        .replace(/\\/g, '\\\\') // Backslashes primero
-        .replace(/'/g, "\\'")   // Comillas simples
-        .replace(/\$/g, '')     // Evitar romper $$ delimiters
-        .replace(/[\r\n]+/g, ' '); // Newlines a espacio
-}
-
-// --- File Processing ---
+// --- Process File ---
 
 async function processFile(filePath) {
     const fileName = path.basename(filePath);
-    if (!fileName.endsWith('.json') || fileName.startsWith('.')) return;
+    if (!fileName.endsWith('.json') || fileName.startsWith('.') || fileName.endsWith('.extraction.json')) return;
 
     try {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const newsItem = JSON.parse(raw);
 
-        console.log(`\nOS: Procesando "${newsItem.title?.slice(0, 60)}..."`);
+        console.log(`\nOS: Procesando "${newsItem.title?.slice(0, 70)}..."`);
         console.log(`    Fuente: ${newsItem.source_name} (${newsItem.source_lang})`);
 
-        // Verificar si ya existe extracción persistente
+        // Check for cached extraction
         const extractionPath = filePath.replace('.json', '.extraction.json');
         let rawExtraction;
 
         if (fs.existsSync(extractionPath)) {
-            // Reusar extracción previa (no re-inferir)
             rawExtraction = JSON.parse(fs.readFileSync(extractionPath, 'utf-8'));
             console.log('    (reusando extracción previa)');
         } else {
-            // Extraer ontología con Ollama
-            rawExtraction = await extractWithOllama(newsItem);
-            // Persistir extracción
+            rawExtraction = await extract(newsItem);
             fs.writeFileSync(extractionPath, JSON.stringify(rawExtraction, null, 2));
         }
 
-        const extraction = resolveExtraction(rawExtraction);
+        const extraction = resolve(rawExtraction);
         const evt = extraction.event;
-        console.log(`    Evento: ${evt?.name || extraction.event_type || '?'} [${evt?.event_type || extraction.event_type || '?'}] ${evt?.date || ''}`);
-        console.log(`    Entidades: ${extraction.entities?.map(e => `${e.name}${e.desc ? ' (' + e.desc + ')' : ''}`).join(', ')}`);
-        console.log(`    Claims: ${extraction.claims?.length || 0}`);
-        console.log(`    Relations: ${extraction.entity_relations?.length || 0}`);
+        console.log(`    Evento: ${evt?.name || '?'} [${evt?.event_type || '?'}] ${evt?.date || ''}`);
+        console.log(`    Actores: ${extraction.actors?.map(a => `${a.name} (${a.role || '?'})`).join(', ')}`);
 
-        // Escribir en el grafo
+        // Write to SQL (before LOAD 'age')
         const client = await pool.connect();
         try {
+            await client.query(`
+                INSERT INTO news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+                ON CONFLICT (link) DO UPDATE SET processed = true
+            `, [newsItem.source_name, newsItem.source_lang, newsItem.source_region || '',
+                newsItem.title, newsItem.link, newsItem.description, newsItem.pub_date]);
+
+            // Write to graph
             await client.query("LOAD 'age'");
             await client.query("SET search_path = ag_catalog, public");
             await writeToGraph(client, newsItem, extraction);
-            console.log('    -> Guardado en grafo.');
-            // Mover a procesados
+            console.log('    -> Guardado.');
+
+            // Move to processed
             if (!fs.existsSync(PROCESSED_DIR)) fs.mkdirSync(PROCESSED_DIR, { recursive: true });
             if (fs.existsSync(filePath)) {
                 fs.renameSync(filePath, path.join(PROCESSED_DIR, fileName));
-                // Mover extracción también
-                const extPath = filePath.replace('.json', '.extraction.json');
-                if (fs.existsSync(extPath)) {
-                    fs.renameSync(extPath, path.join(PROCESSED_DIR, fileName.replace('.json', '.extraction.json')));
+                if (fs.existsSync(extractionPath)) {
+                    fs.renameSync(extractionPath, path.join(PROCESSED_DIR, fileName.replace('.json', '.extraction.json')));
                 }
             }
-        } catch (graphErr) {
-            console.error(`    GRAPH ERROR: ${graphErr.message.slice(0, 120)}`);
-            // Extracción se guardó, archivo queda en raw para reintentar
+        } catch (err) {
+            console.error(`    ERROR: ${err.message.slice(0, 120)}`);
         } finally {
             client.release();
         }
-
     } catch (error) {
         console.error(`    ERROR: ${error.message}`);
     }
@@ -425,26 +298,21 @@ async function processFile(filePath) {
 
 // --- Daemon ---
 
-async function processExistingFiles() {
+async function processAll() {
     const files = fs.readdirSync(RAW_DIR)
-        .filter(f => f.endsWith('.json') && !f.startsWith('.'))
+        .filter(f => f.endsWith('.json') && !f.startsWith('.') && !f.endsWith('.extraction.json'))
         .map(f => path.join(RAW_DIR, f));
 
-    console.log(`OS: ${files.length} archivos pendientes de procesar.\n`);
-
-    for (const file of files) {
-        await processFile(file);
-    }
+    console.log(`OS: ${files.length} archivos pendientes.\n`);
+    for (const file of files) await processFile(file);
 }
 
 async function startWatcher() {
-    console.log(`OS: Vigilando ${RAW_DIR} para nuevas noticias...\n`);
-
+    console.log(`OS: Vigilando ${RAW_DIR}...\n`);
     fs.watch(RAW_DIR, async (eventType, fileName) => {
-        if (eventType === 'rename' && fileName?.endsWith('.json')) {
+        if (eventType === 'rename' && fileName?.endsWith('.json') && !fileName.endsWith('.extraction.json')) {
             const filePath = path.join(RAW_DIR, fileName);
             if (fs.existsSync(filePath)) {
-                // Esperar a que el archivo se termine de escribir
                 await new Promise(r => setTimeout(r, 500));
                 await processFile(filePath);
             }
@@ -453,16 +321,14 @@ async function startWatcher() {
 }
 
 async function main() {
-    console.log('=== OverStand (OS) - Daemon de Ingesta ===\n');
-
+    console.log('=== OverStand — Ingesta v2 ===\n');
     await initDB();
-    await processExistingFiles();
+    await processAll();
     await startWatcher();
-
     console.log('\nOS: Daemon activo. Ctrl+C para detener.');
 }
 
-main().catch(err => {
-    console.error('OS Fatal:', err);
-    process.exit(1);
-});
+// Allow single-file processing from API
+module.exports = { processFile, pool, initDB };
+
+main().catch(err => { console.error('Fatal:', err); process.exit(1); });

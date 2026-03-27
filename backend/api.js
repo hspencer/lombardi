@@ -198,7 +198,7 @@ async function handleAPI(req, res) {
 
         // Get all edges between known nodes
         const allEdges = await ageQuery(
-            `MATCH (a)-[r]-(b) WHERE a.id IN [${allIds}] AND b.id IN [${allIds}] RETURN {source: a.id, target: b.id, type: type(r)}`
+            `MATCH (a)-[r]-(b) WHERE a.id IN [${allIds}] AND b.id IN [${allIds}] RETURN {source: a.id, target: b.id, type: type(r), role: r.role, tension_score: r.tension_score}`
         ).catch(() => []);
 
         // Deduplicate edges (undirected queries return both directions)
@@ -867,6 +867,191 @@ async function handleAPI(req, res) {
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ pending, processed, extractions }));
+        return;
+    }
+
+    // === NEWS FEED (all news with processing status) ===
+    if (url.pathname === '/api/news/feed') {
+        const page = parseInt(url.searchParams.get('page') || '0');
+        const limit = 30;
+        const offset = page * limit;
+
+        const client = await pool.connect();
+        try {
+            // Get news from SQL table (most recent first)
+            const result = await client.query(
+                `SELECT * FROM news_raw ORDER BY pub_date DESC NULLS LAST LIMIT $1 OFFSET $2`,
+                [limit, offset]
+            );
+            const total = await client.query('SELECT count(*) FROM news_raw');
+
+            // Check which have graph nodes
+            await client.query("LOAD 'age'");
+            await client.query("SET search_path = ag_catalog, public");
+
+            const items = [];
+            for (const row of result.rows) {
+                const newsId = Buffer.from(row.link || '').toString('base64').slice(0, 20);
+                // Check if noticia node exists in graph
+                const inGraph = await client.query(`
+                    SELECT * FROM cypher('overstanding', $$
+                        MATCH (n:Noticia {id: '${esc(newsId)}'}) RETURN count(n)
+                    $$) as (c agtype)
+                `).catch(() => ({ rows: [{ c: '0' }] }));
+
+                const claimCount = await client.query(`
+                    SELECT * FROM cypher('overstanding', $$
+                        MATCH (n:Noticia {id: '${esc(newsId)}'})-[:REPORTA]->(c:Afirmacion) RETURN count(c)
+                    $$) as (c agtype)
+                `).catch(() => ({ rows: [{ c: '0' }] }));
+
+                items.push({
+                    ...row,
+                    _newsId: newsId,
+                    _inGraph: parseInt(JSON.parse(inGraph.rows[0]?.c || '0')) > 0,
+                    _claimCount: parseInt(JSON.parse(claimCount.rows[0]?.c || '0'))
+                });
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                items,
+                total: parseInt(total.rows[0].count),
+                page, limit
+            }));
+        } finally {
+            client.release();
+        }
+        return;
+    }
+
+    // === NEWS PROCESS + EGO (process a news item on demand, return its graph) ===
+    if (url.pathname === '/api/news/process' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { link } = body;
+        if (!link) { res.writeHead(400); res.end('{"error":"link required"}'); return; }
+
+        const RAW_DIR = path.join(__dirname, '../data/raw_news');
+        const PROC_DIR = path.join(RAW_DIR, '.processed');
+
+        // Find the raw file by link
+        const allFiles = [...fs.readdirSync(RAW_DIR), ...(fs.existsSync(PROC_DIR) ? fs.readdirSync(PROC_DIR).map(f => '.processed/' + f) : [])];
+        let newsItem = null;
+        let extractionData = null;
+
+        for (const file of allFiles) {
+            if (!file.endsWith('.json') || file.endsWith('.extraction.json')) continue;
+            try {
+                const fullPath = path.join(RAW_DIR, file);
+                const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
+                if (content.link === link) {
+                    newsItem = content;
+                    // Check for extraction
+                    const extPath = fullPath.replace('.json', '.extraction.json');
+                    if (fs.existsSync(extPath)) {
+                        extractionData = JSON.parse(fs.readFileSync(extPath, 'utf-8'));
+                    }
+                    break;
+                }
+            } catch {}
+        }
+
+        if (!newsItem) {
+            res.writeHead(404); res.end('{"error":"news not found"}'); return;
+        }
+
+        // If no extraction, process with Ollama now
+        if (!extractionData) {
+            try {
+                const { extract } = require('./ingest-extract.js');
+                // Inline extraction using Ollama
+                const ollamaRes = await fetch('http://localhost:11434/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    signal: AbortSignal.timeout(120000),
+                    body: JSON.stringify({
+                        model: JSON.parse(fs.readFileSync(path.join(__dirname, '../data/schema.json'), 'utf-8')).extraction.models.extractor.model,
+                        prompt: `Extract event and actors from: Title: ${newsItem.title}\nSource: ${newsItem.source_name}\nDescription: ${newsItem.description}`,
+                        stream: false,
+                        options: { temperature: 0.1 }
+                    })
+                });
+                const data = await ollamaRes.json();
+                const jsonMatch = data.response?.match(/\{[\s\S]*\}/);
+                if (jsonMatch) extractionData = JSON.parse(jsonMatch[0]);
+            } catch (err) {
+                res.writeHead(500);
+                res.end(JSON.stringify({ error: 'Extraction failed: ' + err.message }));
+                return;
+            }
+        }
+
+        if (!extractionData?.event) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ focal: null, nodes: [], edges: [], extraction: extractionData }));
+            return;
+        }
+
+        // Write to graph
+        const client = await pool.connect();
+        try {
+            await client.query("LOAD 'age'");
+            await client.query("SET search_path = ag_catalog, public");
+
+            const evt = extractionData.event;
+            const actors = extractionData.actors || [];
+
+            // Create event
+            await client.query(`
+                SELECT * FROM cypher('overstanding', $$
+                    MERGE (e:Evento {id: '${esc(evt.id)}'})
+                    SET e.name = '${esc(evt.name)}', e.event_type = '${esc(evt.event_type)}',
+                        e.date = '${esc(evt.date || '')}', e.source = '${esc(newsItem.source_name)}',
+                        e.source_url = '${esc(newsItem.link)}'
+                    RETURN e
+                $$) as (e agtype)
+            `).catch(() => {});
+
+            // Create actors + PARTICIPA
+            for (const a of actors) {
+                await client.query(`
+                    SELECT * FROM cypher('overstanding', $$
+                        MERGE (a:Actor {id: '${esc(a.id)}'})
+                        SET a.name = '${esc(a.name)}', a.type = '${esc(a.type)}', a.description = '${esc(a.description || '')}'
+                        RETURN a
+                    $$) as (a agtype)
+                `).catch(() => {});
+
+                await client.query(`
+                    SELECT * FROM cypher('overstanding', $$
+                        MATCH (a:Actor {id: '${esc(a.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                        MERGE (a)-[r:PARTICIPA]->(e)
+                        SET r.role = '${esc(a.role || '')}'
+                        RETURN a, e
+                    $$) as (a agtype, e agtype)
+                `).catch(() => {});
+            }
+
+            // Return the ego of the event
+            const nodesMap = new Map();
+            const eventNode = { ...evt, label: 'Evento', _degree: 0 };
+            nodesMap.set(evt.id, eventNode);
+            const edgesList = [];
+
+            for (const a of actors) {
+                nodesMap.set(a.id, { ...a, label: 'Actor', _degree: 1 });
+                edgesList.push({ source: a.id, target: evt.id, type: 'PARTICIPA', role: a.role });
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                focal: eventNode,
+                nodes: [...nodesMap.values()],
+                edges: edgesList
+            }));
+        } finally {
+            client.release();
+        }
         return;
     }
 

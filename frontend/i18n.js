@@ -58,7 +58,10 @@ const TRANSLATIONS = {
         'ingest.unprocessed': 'Sin procesar',
         'process.title': 'Procesamiento',
         'process.fetch': 'Buscar RSS nuevos',
-        'detail.delete.confirm': '¿Eliminar nodo'
+        'detail.delete.confirm': '¿Eliminar nodo',
+        'tab.node': 'Nodo',
+        'tab.feed': 'Noticias',
+        'feed.claims': 'afirmaciones'
     },
     en: {
         'search.placeholder': 'Search actor, event...',
@@ -113,7 +116,10 @@ const TRANSLATIONS = {
         'ingest.unprocessed': 'Unprocessed',
         'process.title': 'Processing',
         'process.fetch': 'Fetch new RSS',
-        'detail.delete.confirm': 'Delete node'
+        'detail.delete.confirm': 'Delete node',
+        'tab.node': 'Node',
+        'tab.feed': 'News',
+        'feed.claims': 'claims'
     }
 };
 

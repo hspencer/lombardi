@@ -1,119 +1,86 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "OverStand Ontology",
-  "version": "1.0.0",
-  "description": "Schema que define la estructura del grafo de conocimiento y los tipos de evento para la extracción ontológica de noticias.",
+  "version": "2.0.0",
+  "description": "Ontología v2: Actor + Evento como nodos. Relaciones como aristas con metadatos. Noticias solo en SQL.",
 
   "graph": {
     "name": "overstanding",
     "nodes": {
       "Actor": {
-        "description": "Entidad involucrada en un hecho noticioso.",
+        "description": "Entidad que participa en eventos: persona, organización, lugar u objeto.",
         "properties": {
-          "id":   { "type": "string", "description": "Identificador único kebab-case (ej: 'gobierno-ucrania').", "primary": true },
-          "name": { "type": "string", "description": "Nombre legible para visualización." },
-          "type": { "type": "string", "enum": ["Person", "Organization", "Location", "Object"], "description": "Clasificación de la entidad." },
-          "desc": { "type": "string", "description": "Descriptor breve en español (ej: 'presidente de Venezuela', 'agencia de noticias rusa')." }
-        }
-      },
-      "Noticia": {
-        "description": "Artículo o item RSS ingestado.",
-        "properties": {
-          "id":     { "type": "string", "description": "Hash derivado del link original.", "primary": true },
-          "title":  { "type": "string" },
-          "source": { "type": "string", "description": "Nombre de la fuente (ej: 'BBC News - World')." },
-          "link":   { "type": "string", "format": "uri" },
-          "lang":   { "type": "string", "description": "Código ISO 639-1 del idioma." }
+          "id":          { "type": "string", "description": "Identificador único kebab-case.", "primary": true },
+          "name":        { "type": "string", "description": "Nombre legible para visualización." },
+          "type":        { "type": "string", "enum": ["Person", "Organization", "Location", "Object"], "description": "Clasificación." },
+          "description": { "type": "string", "description": "Descriptor breve en español." }
         }
       },
       "Evento": {
-        "description": "Acontecimiento discreto que agrupa afirmaciones relacionadas. Centro gravitacional del grafo.",
+        "description": "Hecho noticioso discreto. Centro gravitacional del grafo.",
         "properties": {
-          "id":         { "type": "string", "description": "kebab-case descriptivo (ej: 'invasion-ucrania-2022').", "primary": true },
-          "name":       { "type": "string", "description": "Nombre legible en español." },
-          "event_type": { "type": "string", "$ref": "#/event_types" },
-          "date":       { "type": "string", "format": "date", "description": "Fecha del evento (ISO 8601)." }
-        }
-      },
-      "Afirmacion": {
-        "description": "Claim atómico extraído: Sujeto-Predicado-Objeto.",
-        "properties": {
-          "id":              { "type": "string", "description": "newsId-cN (índice secuencial por noticia).", "primary": true },
-          "subject":         { "type": "string", "description": "ID del Actor sujeto." },
-          "predicate":       { "type": "string", "description": "Verbo en español que describe la acción." },
-          "object":          { "type": "string", "description": "ID del Actor objeto, o valor literal." },
-          "is_disputed":     { "type": "boolean", "default": false, "description": "True si la fuente expresa duda o versiones contradictorias." },
-          "evidence_quote":  { "type": "string", "description": "Cita textual en el idioma original de la fuente." },
-          "event_type":      { "type": "string", "$ref": "#/event_types", "description": "Clasificación del evento." }
+          "id":              { "type": "string", "description": "kebab-case descriptivo (ej: 'disculpa-rai-bobsled-israel').", "primary": true },
+          "name":            { "type": "string", "description": "Nombre legible en español del hecho." },
+          "event_type":      { "type": "string", "$ref": "#/event_types" },
+          "date":            { "type": "string", "format": "date", "description": "Fecha del evento (YYYY-MM-DD)." },
+          "is_disputed":     { "type": "boolean", "default": false },
+          "evidence_quote":  { "type": "string", "description": "Cita textual en idioma original de la fuente." },
+          "source":          { "type": "string", "description": "Nombre de la fuente que reporta." },
+          "source_url":      { "type": "string", "format": "uri" }
         }
       }
     },
     "edges": {
-      "REPORTA": {
-        "from": "Noticia",
-        "to": "Afirmacion",
-        "description": "La noticia contiene esta afirmación.",
-        "visual": { "color": "#BDC3C7", "style": "solid", "width": 1, "force_distance": 60 }
-      },
-      "SOSTIENE": {
-        "from": "Afirmacion",
-        "to": "Evento",
-        "description": "La afirmación sostiene o alimenta este evento.",
-        "visual": { "color": "#7F8C8D", "style": "solid", "width": 1.5, "force_distance": 30 }
-      },
       "PARTICIPA": {
         "from": "Actor",
         "to": "Evento",
-        "description": "El actor participa en este evento.",
-        "visual": { "color": "#2980B9", "style": "solid", "width": 2, "force_distance": 80 }
-      },
-      "INVOLUCRA": {
-        "from": "Afirmacion",
-        "to": "Actor",
-        "description": "La afirmación menciona a este actor como sujeto u objeto.",
-        "visual": { "color": "#7F8C8D", "style": "solid", "width": 1, "force_distance": 100 }
+        "description": "El actor participa en este evento. El rol describe cómo.",
+        "properties": {
+          "role": { "type": "string", "description": "Verbo que describe la participación: 'se disculpa', 'ataca', 'sanciona', 'declara'." }
+        },
+        "visual": { "color": "#2980B9", "style": "arrow", "width": 2, "force_distance": 80 }
       },
       "CAUSA": {
         "from": "Evento",
         "to": "Evento",
-        "description": "Un evento causa o desencadena otro cronológicamente.",
+        "description": "Un evento causa o desencadena otro.",
         "visual": { "color": "#8E44AD", "style": "arrow", "width": 3, "force_distance": 150 }
       },
       "CONTRADICE": {
-        "from": "Afirmacion",
-        "to": "Afirmacion",
-        "description": "Dos afirmaciones de distintas fuentes se contradicen sobre el mismo hecho.",
+        "from": "Evento",
+        "to": "Evento",
+        "description": "Dos eventos de distintas fuentes se contradicen sobre el mismo hecho.",
         "properties": {
-          "tension_score": { "type": "number", "minimum": 0, "maximum": 1, "description": "Grado de contradicción semántica (Sd)." },
-          "detected_by":   { "type": "string", "enum": ["qwen3.5", "claude"], "description": "Modelo que detectó la contradicción." },
-          "detected_at":   { "type": "string", "format": "date-time" }
+          "tension_score": { "type": "number", "minimum": 0, "maximum": 1 },
+          "analysis":      { "type": "string" },
+          "detected_by":   { "type": "string" }
         },
         "visual": { "color": "#E74C3C", "style": "solid", "width": 5, "force_distance": 300 }
       },
       "COMPLEMENTA": {
-        "from": "Afirmacion",
-        "to": "Afirmacion",
-        "description": "Dos afirmaciones de distintas fuentes se refuerzan mutuamente.",
+        "from": "Evento",
+        "to": "Evento",
+        "description": "Dos eventos de distintas fuentes se refuerzan mutuamente.",
         "visual": { "color": "#27AE60", "style": "dashed", "width": 2, "force_distance": 50 }
       },
-      "DESMIENTE": {
+      "PERTENECE_A": {
         "from": "Actor",
-        "to": "Afirmacion",
-        "description": "Un actor niega oficialmente una afirmación.",
-        "visual": { "color": "#C0392B", "style": "arrow", "width": 2, "force_distance": 120 }
+        "to": "Actor",
+        "description": "Relación estructural (presidente de, miembro de).",
+        "visual": { "color": "#7F8C8D", "style": "solid", "width": 1, "force_distance": 60 }
       },
-      "ACTUALIZA": {
-        "from": "Afirmacion",
-        "to": "Afirmacion",
-        "description": "Una afirmación nueva reemplaza o actualiza información previa.",
-        "visual": { "color": "#F1C40F", "style": "solid", "width": 1, "force_distance": 40 }
+      "UBICADO_EN": {
+        "from": "Actor",
+        "to": "Actor",
+        "description": "Relación geográfica.",
+        "visual": { "color": "#7F8C8D", "style": "dashed", "width": 1, "force_distance": 60 }
       }
     }
   },
 
   "sql": {
     "news_raw": {
-      "description": "Tabla relacional para búsqueda full-text de noticias.",
+      "description": "Tabla relacional para noticias. Fuente de verdad para el feed. No entra al grafo.",
       "columns": {
         "id":            { "type": "serial", "primary": true },
         "source_name":   { "type": "text" },
@@ -130,46 +97,41 @@
   },
 
   "event_types": [
-    { "id": "CAMBIO_LIDERAZGO",     "label": "Cambio de liderazgo",       "description": "Elección, renuncia, golpe de estado, sucesión." },
-    { "id": "PROMULGACION_NORMA",    "label": "Promulgación de norma",     "description": "Ley, decreto, regulación, orden ejecutiva." },
-    { "id": "PROTESTA_SOCIAL",       "label": "Protesta social",           "description": "Manifestación, huelga, disturbio civil." },
-    { "id": "RUPTURA_DIPLOMATICA",   "label": "Ruptura diplomática",       "description": "Expulsión de embajadores, retiro de reconocimiento." },
-    { "id": "ACCION_ARMADA",         "label": "Acción armada",             "description": "Ataque militar, bombardeo, operación especial." },
-    { "id": "AMENAZA_COERCION",      "label": "Amenaza o coerción",        "description": "Ultimátum, amenaza militar o económica." },
-    { "id": "INCAUTACION_DETENCION", "label": "Incautación o detención",   "description": "Arresto, confiscación de bienes, extradición." },
-    { "id": "ACUERDO_PAZ",           "label": "Acuerdo de paz",            "description": "Cese al fuego, tratado, negociación exitosa." },
-    { "id": "ADQUISICION_FUSION",    "label": "Adquisición o fusión",      "description": "Compra corporativa, merger, takeover." },
-    { "id": "SANCION_ECONOMICA",     "label": "Sanción económica",         "description": "Embargo, restricción comercial, congelamiento de activos." },
-    { "id": "LANZAMIENTO_PRODUCTO",  "label": "Lanzamiento de producto",   "description": "Producto, servicio, plataforma o tecnología nueva." },
-    { "id": "QUIEBRA_INSOLVENCIA",   "label": "Quiebra o insolvencia",     "description": "Bancarrota, default, colapso financiero." },
-    { "id": "DECLARACION_PUBLICA",   "label": "Declaración pública",       "description": "Discurso oficial, conferencia de prensa, comunicado." },
-    { "id": "DENUNCIA_ACUSACION",    "label": "Denuncia o acusación",      "description": "Investigación, cargo criminal, demanda." },
-    { "id": "FILTRACION",            "label": "Filtración",                "description": "Leak de documentos, información clasificada revelada." },
-    { "id": "DESMENTIDO",            "label": "Desmentido",                "description": "Negación oficial de un hecho previamente reportado." },
-    { "id": "EVENTO_GENERICO",       "label": "Evento genérico",           "description": "No encaja en otra categoría." }
+    { "id": "CAMBIO_LIDERAZGO",     "label": "Cambio de liderazgo" },
+    { "id": "PROMULGACION_NORMA",    "label": "Promulgación de norma" },
+    { "id": "PROTESTA_SOCIAL",       "label": "Protesta social" },
+    { "id": "RUPTURA_DIPLOMATICA",   "label": "Ruptura diplomática" },
+    { "id": "ACCION_ARMADA",         "label": "Acción armada" },
+    { "id": "AMENAZA_COERCION",      "label": "Amenaza o coerción" },
+    { "id": "INCAUTACION_DETENCION", "label": "Incautación o detención" },
+    { "id": "ACUERDO_PAZ",           "label": "Acuerdo de paz" },
+    { "id": "ADQUISICION_FUSION",    "label": "Adquisición o fusión" },
+    { "id": "SANCION_ECONOMICA",     "label": "Sanción económica" },
+    { "id": "LANZAMIENTO_PRODUCTO",  "label": "Lanzamiento de producto" },
+    { "id": "QUIEBRA_INSOLVENCIA",   "label": "Quiebra o insolvencia" },
+    { "id": "DECLARACION_PUBLICA",   "label": "Declaración pública" },
+    { "id": "DENUNCIA_ACUSACION",    "label": "Denuncia o acusación" },
+    { "id": "FILTRACION",            "label": "Filtración" },
+    { "id": "DESMENTIDO",            "label": "Desmentido" },
+    { "id": "EVENTO_GENERICO",       "label": "Evento genérico" }
   ],
 
   "extraction": {
     "models": {
-      "extractor":  { "model": "llama3.1",  "role": "Extracción de JSON ontológico desde noticias." },
-      "resolver":   { "model": "qwen3.5",    "role": "Detección de contradicciones entre afirmaciones." },
-      "auditor":    { "model": "claude",    "role": "Análisis complejo cuando Sd > 0.15. Uso puntual vía API." }
+      "extractor":  { "model": "llama3.1",  "role": "Extracción ontológica desde noticias." },
+      "resolver":   { "model": "qwen3.5",   "role": "Detección de contradicciones entre eventos." },
+      "auditor":    { "model": "claude",     "role": "Análisis complejo. Uso puntual vía API." }
     },
     "output_language": "es",
     "rules": [
-      "Identificar entidades y asignar ID único kebab-case.",
-      "Cada entidad DEBE tener un campo 'desc': descriptor breve en español que identifique a la entidad (ej: 'presidente de Venezuela', 'agencia de noticias estatal rusa', 'ciudad portuaria del sur de Ucrania'). Máximo 10 palabras.",
-      "Extraer 'entity_relations': relaciones implícitas entre entidades (ej: Maduro PERTENECE_A Venezuela, OTAN UBICADO_EN Bruselas). Tipos: PARTICIPA, UBICADO_EN, PERTENECE_A.",
-      "Extraer relaciones como Sujeto-Predicado-Objeto.",
-      "Extraer el EVENTO principal como nodo separado con id kebab-case descriptivo, nombre breve en español, event_type y fecha (YYYY-MM-DD si se puede inferir). Ejemplo: {id:'visita-zelensky-arabia-saudita', name:'Visita de Zelensky a Arabia Saudita', event_type:'DECLARACION_PUBLICA', date:'2026-03-26'}.",
-      "Clasificar el evento principal en exactamente UN event_type.",
-      "Vincular cada entidad con el evento via entity_relations con relation PARTICIPA.",
-      "Si hay duda, versiones conflictivas o falta de evidencia: is_disputed = true.",
-      "Extraer cifras (dinero, víctimas, porcentajes) con precisión.",
+      "Extraer el EVENTO principal: un hecho discreto con id kebab-case, nombre en español, event_type y fecha.",
+      "Extraer ACTORES involucrados con id, nombre, tipo (Person/Organization/Location/Object) y descriptor breve.",
+      "Para cada actor, indicar su ROL en el evento: el verbo que describe su participación (ej: 'se disculpa', 'sanciona', 'ataca', 'declara').",
+      "Extraer relaciones estructurales entre actores (PERTENECE_A, UBICADO_EN).",
+      "Si hay duda o versiones conflictivas: is_disputed = true en el evento.",
       "Mantener evidence_quote en el idioma original de la fuente.",
-      "Los nombres propios (personas, organizaciones, lugares) se mantienen en su forma original.",
-      "Los predicados (verbos) SIEMPRE en español: 'visits' → 'visita', 'bans' → 'prohíbe', 'declares' → 'declara'.",
-      "El campo 'name' de entidades genéricas se traduce al español: 'European Union' → 'Unión Europea', 'US Court' → 'Tribunal de EE.UU.'."
+      "Nombres propios se mantienen en su forma original. Nombres genéricos en español.",
+      "Los roles (verbos) SIEMPRE en español."
     ]
   }
 }

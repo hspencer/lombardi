@@ -1339,6 +1339,108 @@ async function fetchNewRSS() {
     }, 10000);
 }
 
+// --- Right panel tabs ---
+
+let currentRightTab = 'node';
+let feedPage = 0;
+let feedTotal = 0;
+
+function switchRightTab(tab) {
+    currentRightTab = tab;
+    document.querySelectorAll('.right-tab').forEach(b => b.classList.remove('active'));
+    document.getElementById(tab === 'feed' ? 'tabFeed' : 'tabNode').classList.add('active');
+    document.getElementById('rightNodePanel').hidden = tab !== 'node';
+    document.getElementById('rightFeedPanel').hidden = tab !== 'feed';
+
+    if (tab === 'feed' && document.getElementById('newsFeed').children.length === 0) {
+        feedPage = 0;
+        loadNewsFeed();
+    }
+}
+
+async function loadNewsFeed(append) {
+    const feed = document.getElementById('newsFeed');
+    if (!append) { feed.innerHTML = ''; feedPage = 0; }
+
+    const res = await fetch(`${API}/api/news/feed?page=${feedPage}`);
+    const data = await res.json();
+    feedTotal = data.total;
+
+    for (const item of data.items) {
+        const el = document.createElement('div');
+        el.className = 'feed-item';
+        el.onclick = () => showNewsEgo(item.link, item.title);
+        el.innerHTML = `
+            <div class="feed-item-header">
+                <span class="feed-item-source">${item.source_name || ''}</span>
+                <span class="feed-item-date">${formatDate(item.pub_date)}</span>
+            </div>
+            <div class="feed-item-title">${item.title || '—'}</div>
+            <div class="feed-item-status">
+                <span class="feed-status-dot ${item._inGraph ? 'in-graph' : 'pending'}"></span>
+                <span class="feed-status-label">${item._inGraph ? `${item._claimCount} claims` : t('ingest.status.pending')}</span>
+            </div>
+        `;
+        feed.appendChild(el);
+    }
+
+    const btn = document.getElementById('loadMoreBtn');
+    btn.hidden = (feedPage + 1) * data.limit >= feedTotal;
+}
+
+function loadMoreFeed() {
+    feedPage++;
+    loadNewsFeed(true);
+}
+
+async function showNewsEgo(link, title) {
+    // Show processing state in the feed item
+    const feedItems = document.querySelectorAll('.feed-item');
+    let targetItem = null;
+    feedItems.forEach(el => {
+        if (el.querySelector('.feed-item-title')?.textContent === title) {
+            targetItem = el;
+            el.style.opacity = '0.5';
+            el.insertAdjacentHTML('beforeend', '<div class="feed-processing">Procesando con Ollama...</div>');
+        }
+    });
+
+    try {
+        const res = await fetch(`${API}/api/news/process`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ link })
+        });
+        const data = await res.json();
+
+        if (targetItem) {
+            targetItem.style.opacity = '1';
+            targetItem.querySelector('.feed-processing')?.remove();
+        }
+
+        if (!data.focal) return;
+
+        // Switch to node tab and render
+        switchRightTab('node');
+        focalId = data.focal.id;
+        lastEgoData = data;
+
+        history = [{ id: focalId, name: data.focal.name || title, edge: null }];
+        renderBreadcrumbs();
+
+        if (currentView === 'titles') renderTitles(data);
+        else renderEgo(data);
+
+        showDetail(data.focal);
+    } catch (err) {
+        if (targetItem) {
+            targetItem.style.opacity = '1';
+            const proc = targetItem.querySelector('.feed-processing');
+            if (proc) proc.textContent = 'Error: ' + err.message;
+        }
+    }
+}
+
 // --- Console ---
 
 let consoleOpen = false;

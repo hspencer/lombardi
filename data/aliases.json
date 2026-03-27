@@ -378,6 +378,16 @@
         "onu",
         "Organización de las Naciones Unidas"
       ]
+    },
+    "vladimir-putin": {
+      "canonical": "Vladimir Putin",
+      "type": "Person",
+      "aliases": []
+    },
+    "onu": {
+      "canonical": "ONU",
+      "type": "Organization",
+      "aliases": []
     }
   }
 }

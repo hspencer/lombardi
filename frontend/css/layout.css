@@ -331,9 +331,11 @@ body {
 .split-right {
     width: 380px;
     min-width: 280px;
-    overflow-y: auto;
     background: var(--bg-panel);
     border-left: 1px solid var(--border-default);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 /* --- Graph toolbar --- */
