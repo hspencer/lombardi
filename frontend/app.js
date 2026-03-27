@@ -46,7 +46,7 @@ function nodeStroke(d) { return typeColor(d).stroke || 'none'; }
 
 function nodeStrokeWidth(d) {
     if (d.id === focalId) return 3;
-    if (d.label === 'Actor') return 1.5;
+    if (d.label === 'Actor' || d.label === 'Evento') return 1.5;
     return 0;
 }
 
@@ -293,7 +293,7 @@ function renderEgo(data) {
         .on('click', (e, d) => {
             e.stopPropagation();
             if (d.id === focalId) return;
-            if (d.label === 'Actor') {
+            if (d.label === 'Actor' || d.label === 'Evento') {
                 navigateTo(d.id);
             } else {
                 showDetail(d);
@@ -302,7 +302,7 @@ function renderEgo(data) {
         .on('dblclick', (e, d) => {
             e.stopPropagation();
             // Double-click: navigate with breadcrumb reset
-            if (d.label === 'Actor') {
+            if (d.label === 'Actor' || d.label === 'Evento') {
                 navigateTo(d.id, true);
             }
         })
@@ -586,7 +586,7 @@ function renderTitles(data) {
         .on('click', (e, d) => {
             e.stopPropagation();
             if (d.id === focalId) return;
-            if (d.label === 'Actor') {
+            if (d.label === 'Actor' || d.label === 'Evento') {
                 navigateTo(d.id);
             } else {
                 showDetail(d);
@@ -594,7 +594,7 @@ function renderTitles(data) {
         })
         .on('dblclick', (e, d) => {
             e.stopPropagation();
-            if (d.label === 'Actor') navigateTo(d.id, true);
+            if (d.label === 'Actor' || d.label === 'Evento') navigateTo(d.id, true);
         })
         .call(makeDrag());
 

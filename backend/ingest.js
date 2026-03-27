@@ -100,9 +100,14 @@ ENTITY TYPES: ${entityTypes}
 
 Respond with ONLY valid JSON, no markdown, no explanation:
 {
-  "event_type": "EVENT_TYPE",
+  "event": {
+    "id": "kebab-case-descriptivo (ej: ataque-iran-israel-2026)",
+    "name": "Nombre breve del evento en español",
+    "event_type": "EVENT_TYPE",
+    "date": "YYYY-MM-DD o null si no se puede determinar"
+  },
   "entities": [
-    {"id": "kebab-case-id", "name": "Nombre (propios intactos)", "type": "${entityTypes}", "desc": "descriptor breve en español (ej: presidente de Venezuela, ciudad portuaria de Ucrania)"}
+    {"id": "kebab-case-id", "name": "Nombre (propios intactos)", "type": "${entityTypes}", "desc": "descriptor breve en español"}
   ],
   "entity_relations": [
     {"source": "entity-id", "relation": "PARTICIPA|UBICADO_EN|PERTENECE_A", "target": "entity-id"}
@@ -240,7 +245,36 @@ async function writeToGraph(client, newsItem, extraction) {
         `).catch(() => {});
     }
 
-    // 3. Crear nodo de Noticia en el grafo
+    // 3. Crear nodo de Evento (si existe en la extracción)
+    const eventNode = extraction.event;
+    if (eventNode && eventNode.id) {
+        try {
+            await client.query(`
+                SELECT * FROM cypher('overstanding', $$
+                    MERGE (e:Evento {id: '${esc(eventNode.id)}'})
+                    SET e.name = '${esc(eventNode.name || '')}',
+                        e.event_type = '${esc(eventNode.event_type || '')}',
+                        e.date = '${esc(eventNode.date || '')}'
+                    RETURN e
+                $$) as (e agtype)
+            `);
+
+            // Vincular cada Actor con el Evento via PARTICIPA
+            for (const entity of extraction.entities) {
+                await client.query(`
+                    SELECT * FROM cypher('overstanding', $$
+                        MATCH (a:Actor {id: '${esc(entity.id)}'}), (e:Evento {id: '${esc(eventNode.id)}'})
+                        MERGE (a)-[:PARTICIPA]->(e)
+                        RETURN a, e
+                    $$) as (a agtype, e agtype)
+                `).catch(() => {});
+            }
+        } catch (err) {
+            console.error(`      [Evento] ${err.message.slice(0, 80)}`);
+        }
+    }
+
+    // 4. Crear nodo de Noticia en el grafo
     const newsId = Buffer.from(newsItem.link).toString('base64').slice(0, 20);
     try {
         await client.query(`
@@ -272,10 +306,21 @@ async function writeToGraph(client, newsItem, extraction) {
                         c.object = '${esc(claim.object)}',
                         c.is_disputed = ${claim.is_disputed || false},
                         c.evidence_quote = '${esc(claim.evidence_quote || '')}',
-                        c.event_type = '${esc(extraction.event_type)}'
+                        c.event_type = '${esc(extraction.event?.event_type || extraction.event_type || '')}'
                     RETURN c
                 $$) as (c agtype)
             `);
+
+            // Afirmacion -[:SOSTIENE]-> Evento
+            if (eventNode?.id) {
+                await client.query(`
+                    SELECT * FROM cypher('overstanding', $$
+                        MATCH (c:Afirmacion {id: '${esc(claimId)}'}), (e:Evento {id: '${esc(eventNode.id)}'})
+                        MERGE (c)-[:SOSTIENE]->(e)
+                        RETURN c, e
+                    $$) as (c agtype, e agtype)
+                `).catch(() => {});
+            }
 
             // Noticia -[:REPORTA]-> Afirmacion
             await client.query(`
@@ -343,7 +388,8 @@ async function processFile(filePath) {
         }
 
         const extraction = resolveExtraction(rawExtraction);
-        console.log(`    Evento: ${extraction.event_type}`);
+        const evt = extraction.event;
+        console.log(`    Evento: ${evt?.name || extraction.event_type || '?'} [${evt?.event_type || extraction.event_type || '?'}] ${evt?.date || ''}`);
         console.log(`    Entidades: ${extraction.entities?.map(e => `${e.name}${e.desc ? ' (' + e.desc + ')' : ''}`).join(', ')}`);
         console.log(`    Claims: ${extraction.claims?.length || 0}`);
         console.log(`    Relations: ${extraction.entity_relations?.length || 0}`);
@@ -357,7 +403,14 @@ async function processFile(filePath) {
             console.log('    -> Guardado en grafo.');
             // Mover a procesados
             if (!fs.existsSync(PROCESSED_DIR)) fs.mkdirSync(PROCESSED_DIR, { recursive: true });
-            fs.renameSync(filePath, path.join(PROCESSED_DIR, fileName));
+            if (fs.existsSync(filePath)) {
+                fs.renameSync(filePath, path.join(PROCESSED_DIR, fileName));
+                // Mover extracción también
+                const extPath = filePath.replace('.json', '.extraction.json');
+                if (fs.existsSync(extPath)) {
+                    fs.renameSync(extPath, path.join(PROCESSED_DIR, fileName.replace('.json', '.extraction.json')));
+                }
+            }
         } catch (graphErr) {
             console.error(`    GRAPH ERROR: ${graphErr.message.slice(0, 120)}`);
             // Extracción se guardó, archivo queda en raw para reintentar

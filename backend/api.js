@@ -148,7 +148,7 @@ async function handleAPI(req, res) {
             // Batch query for degree 2 — only Actor nodes (filter out Afirmacion/Noticia noise)
             for (const nId of g1Ids.slice(0, 20)) {
                 const g2 = await ageQuery2(
-                    `MATCH (n1 {id: '${nId}'})-[r]-(n2:Actor) WHERE n2.id <> '${safeId}' RETURN n2, r`,
+                    `MATCH (n1 {id: '${nId}'})-[r]-(n2) WHERE n2.id <> '${safeId}' AND (n2:Actor OR n2:Evento) RETURN n2, r`,
                     ['n2', 'r']
                 ).catch(() => []);
 
