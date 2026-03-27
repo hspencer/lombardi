@@ -13,11 +13,11 @@ let lastEgoData = null; // cache for view switching
 
 // Colors by entity TYPE (not graph label)
 const TYPE_COLORS = {
-    Person:       { fill: '#8B5E3C', stroke: '#D4A574' },
-    Location:     { fill: '#6B8E5A', stroke: '#A3B88C' },
-    Organization: { fill: '#C45D3E', stroke: '#E8A088' },
-    Object:       { fill: '#A08B76', stroke: '#C4B5A4' },
-    Event:        { fill: '#B8860B', stroke: '#D4A017' }
+    Person:       { fill: '#5C3322', stroke: '#D4A574' },
+    Location:     { fill: '#3D5C2E', stroke: '#A3B88C' },
+    Organization: { fill: '#8B3A2A', stroke: '#E8A088' },
+    Object:       { fill: '#6B5744', stroke: '#C4B5A4' },
+    Event:        { fill: '#7A5D0B', stroke: '#D4A017' }
 };
 
 // Fallback by graph label
@@ -163,7 +163,12 @@ function setDegree(deg) {
     currentDegree = deg;
     document.getElementById('degreeValue').textContent = deg;
     if (lastEgoData) {
-        applyDegreeFilter(deg);
+        if (currentView === 'titles') {
+            // Titles mode: re-render with new degree
+            renderTitles(lastEgoData);
+        } else {
+            applyDegreeFilter(deg);
+        }
     }
 }
 
@@ -228,23 +233,29 @@ async function navigateTo(id, resetBreadcrumb) {
 
     // Update breadcrumbs with edge label
     if (!history.length || history[history.length - 1].id !== focalId) {
-        const displayName = data.focal.name || data.focal.title || data.focal.predicate || focalId.replace(/[a-zA-Z0-9]{15,}/, '…');
+        // If node already in history, truncate back to it (loop detection)
+        const existingIdx = history.findIndex(h => h.id === focalId);
+        if (existingIdx >= 0) {
+            history = history.slice(0, existingIdx + 1);
+        } else {
+            const displayName = data.focal.name || data.focal.title || data.focal.predicate || focalId.replace(/[a-zA-Z0-9]{15,}/, '…');
 
-        // Find the edge between previous focal and new focal
-        let edgeLabel = null;
-        if (previousFocalId && !resetBreadcrumb) {
-            const edge = data.edges.find(e => {
-                const s = typeof e.source === 'object' ? e.source.id : e.source;
-                const t = typeof e.target === 'object' ? e.target.id : e.target;
-                return (s === previousFocalId && t === focalId) || (t === previousFocalId && s === focalId);
-            });
-            if (edge) {
-                edgeLabel = edge.type.replace(/_/g, ' ').toLowerCase();
+            // Find the edge between previous focal and new focal
+            let edgeLabel = null;
+            if (previousFocalId && !resetBreadcrumb) {
+                const edge = data.edges.find(e => {
+                    const s = typeof e.source === 'object' ? e.source.id : e.source;
+                    const t = typeof e.target === 'object' ? e.target.id : e.target;
+                    return (s === previousFocalId && t === focalId) || (t === previousFocalId && s === focalId);
+                });
+                if (edge) {
+                    edgeLabel = edge.type.replace(/_/g, ' ').toLowerCase();
+                }
             }
-        }
 
-        history.push({ id: focalId, name: displayName, edge: edgeLabel });
-        if (history.length > 12) history.shift();
+            history.push({ id: focalId, name: displayName, edge: edgeLabel });
+            if (history.length > 12) history.shift();
+        }
     }
     renderBreadcrumbs();
 
@@ -575,7 +586,7 @@ function renderEgo(data) {
 }
 
 function autoZoom(nodes, zoomBehavior, width, height) {
-    const g1Nodes = nodes.filter(n => n._degree <= 1);
+    const g1Nodes = nodes.filter(n => n._degree <= currentDegree);
     if (g1Nodes.length < 2) return;
 
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -613,11 +624,11 @@ function setView(view) {
 
 // Typography rules by entity type
 const TITLE_STYLE = {
-    Person:       { transform: 'none',      fontWeight: 500, fontStyle: 'normal',  fontSize: 13, font: 'serif' },
-    Location:     { transform: 'uppercase',  fontWeight: 700, fontStyle: 'normal',  fontSize: 11, font: 'sans' },
-    Organization: { transform: 'uppercase',  fontWeight: 500, fontStyle: 'normal',  fontSize: 11, font: 'sans' },
-    Object:       { transform: 'lowercase',  fontWeight: 400, fontStyle: 'italic',  fontSize: 11, font: 'sans' },
-    Event:        { transform: 'none',       fontWeight: 300, fontStyle: 'italic',  fontSize: 14, font: 'sans', maxWidth: 320, anchor: 'start' }
+    Person:       { transform: 'none', fontWeight: 400, fontStyle: 'normal',  fontSize: 14, font: 'serif' },
+    Location:     { transform: 'none', fontWeight: 400, fontStyle: 'normal',  fontSize: 12, font: 'sans' },
+    Organization: { transform: 'none', fontWeight: 400, fontStyle: 'normal',  fontSize: 12, font: 'sans' },
+    Object:       { transform: 'none', fontWeight: 400, fontStyle: 'italic',  fontSize: 12, font: 'sans' },
+    Event:        { transform: 'none', fontWeight: 400, fontStyle: 'italic',  fontSize: 14, font: 'sans' }
 };
 
 function renderTitles(data) {
@@ -661,8 +672,8 @@ function renderTitles(data) {
     });
     nodes.forEach(n => { n._connectionCount = connCount[n.id] || 0; });
 
-    // Only show degree 0-1
-    const visibleNodes = nodes.filter(n => n._degree <= 1);
+    // Show nodes up to current degree
+    const visibleNodes = nodes.filter(n => n._degree <= currentDegree);
 
     // Pin focal
     const focalNode = nodes.find(n => n.id === focalId);
@@ -690,8 +701,8 @@ function renderTitles(data) {
     const node = nodeGroup.selectAll('g')
         .data(nodes)
         .join('g')
-        .attr('cursor', d => d._degree <= 1 ? 'pointer' : 'default')
-        .attr('visibility', d => d._degree <= 1 ? 'visible' : 'hidden')
+        .attr('cursor', d => d._degree <= currentDegree ? 'pointer' : 'default')
+        .attr('visibility', d => d._degree <= currentDegree ? 'visible' : 'hidden')
         .on('click', (e, d) => {
             e.stopPropagation();
             if (d.id === focalId) return;
@@ -708,7 +719,7 @@ function renderTitles(data) {
         .call(makeDrag());
 
     // Max width for text wrapping (pixels)
-    const MAX_TEXT_WIDTH = 160;
+    const MAX_TEXT_WIDTH = 240;
 
     // Helper: wrap text into lines
     function wrapText(text, maxWidth, fontSize) {
@@ -737,10 +748,7 @@ function renderTitles(data) {
             if (d.id === focalId) return base + 6;
             return base + Math.min(d._connectionCount * 0.3, 4);
         })
-        .attr('font-weight', d => {
-            if (d.id === focalId) return 700;
-            return (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontWeight;
-        })
+        .attr('font-weight', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontWeight)
         .attr('font-style', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontStyle)
         .attr('font-family', d => {
             const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
@@ -750,7 +758,7 @@ function renderTitles(data) {
             if (d.id === focalId) return themeVar('--graph-label-focal');
             return nodeColor(d);
         })
-        .attr('text-anchor', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).anchor || 'middle')
+        .attr('text-anchor', 'start')
         .attr('dominant-baseline', 'central')
         .attr('opacity', d => d._degree === 2 ? 0.15 : (d.id === focalId ? 1 : 0.85));
 
@@ -764,7 +772,7 @@ function renderTitles(data) {
         else if (style.transform === 'lowercase') displayName = name.toLowerCase();
 
         const fontSize = parseFloat(el.attr('font-size'));
-        const maxW = style.maxWidth || MAX_TEXT_WIDTH;
+        const maxW = MAX_TEXT_WIDTH;
         const lines = wrapText(displayName, maxW, fontSize);
         const lineH = fontSize * 1.25;
         const startY = -(lines.length - 1) * lineH / 2;
@@ -781,20 +789,19 @@ function renderTitles(data) {
     // Measure bounding boxes for collision + create diffuse backgrounds
     node.each(function(d) {
         const bbox = this.querySelector('text')?.getBBox();
-        const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
         if (bbox) {
-            d._w = bbox.width + 12;
-            d._h = bbox.height + 6;
+            d._w = bbox.width + 16;
+            d._h = bbox.height + 8;
             d._bboxW = bbox.width;
             d._bboxH = bbox.height;
-            // For left-aligned text, the collision center is offset to the right
-            d._bboxOffsetX = style.anchor === 'start' ? bbox.width / 2 : 0;
+            // All text is left-aligned, so collision center is offset to the right
+            d._bboxOffsetX = bbox.width / 2;
         } else {
-            d._w = 60;
-            d._h = 16;
-            d._bboxW = 48;
+            d._w = 80;
+            d._h = 18;
+            d._bboxW = 64;
             d._bboxH = 14;
-            d._bboxOffsetX = 0;
+            d._bboxOffsetX = 32;
         }
     });
 
@@ -809,7 +816,7 @@ function renderTitles(data) {
     // Diffuse background rects
     const bgTheme = themeVar('--bg-app');
     bgGroup.selectAll('rect')
-        .data(nodes.filter(n => n._degree <= 1))
+        .data(nodes.filter(n => n._degree <= currentDegree))
         .join('rect')
         .attr('rx', 3).attr('ry', 3)
         .attr('fill', bgTheme)
@@ -874,7 +881,7 @@ function renderTitles(data) {
             for (let i = 0; i < nds.length; i++) {
                 for (let j = i + 1; j < nds.length; j++) {
                     const a = nds[i], b = nds[j];
-                    if (a._degree > 1 || b._degree > 1) continue;
+                    if (a._degree > currentDegree || b._degree > currentDegree) continue;
                     // Effective center accounts for left-aligned text offset
                     const ax = a.x + (a._bboxOffsetX || 0);
                     const bx = b.x + (b._bboxOffsetX || 0);
@@ -933,11 +940,7 @@ function renderTitles(data) {
             link.attr('d', titleLinkPath);
             node.attr('transform', d => `translate(${d.x},${d.y})`);
             bgGroup.selectAll('rect')
-                .attr('x', d => {
-                    const w = (d._bboxW || 48) + 16;
-                    const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
-                    return style.anchor === 'start' ? d.x - 8 : d.x - w / 2;
-                })
+                .attr('x', d => d.x - 8)
                 .attr('y', d => d.y - ((d._bboxH || 14) + 8) / 2);
         });
 
@@ -1380,11 +1383,10 @@ function renderBreadcrumbs() {
     const nav = document.getElementById('breadcrumbs');
     let html = '';
     history.forEach((h, i) => {
-        // Edge label before this node (from the previous navigation)
         if (i > 0 && h.edge) {
-            html += `<span class="crumb-edge">—${h.edge}→</span>`;
+            html += `<span class="crumb-edge"> – ${h.edge} – </span>`;
         } else if (i > 0) {
-            html += `<span class="crumb-edge">›</span>`;
+            html += `<span class="crumb-edge"> – </span>`;
         }
         html += `<span class="crumb ${h.id === focalId ? 'active' : ''}" onclick="navigateTo('${h.id}')">${h.name}</span>`;
     });

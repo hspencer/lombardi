@@ -61,7 +61,7 @@
 .feed-item-date {
     font-size: var(--font-size-xs);
     font-family: var(--font-mono);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
 }
 
 .feed-item-title {
@@ -103,7 +103,7 @@
 
 .feed-item-event {
     font-size: var(--font-size-xs);
-    color: var(--node-evento);
+    color: var(--tag-evento-ink);
     font-style: italic;
     margin-top: 2px;
 }
@@ -150,7 +150,7 @@
 .feed-status-label {
     font-size: var(--font-size-xs);
     font-family: var(--font-mono);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
 }
 
 .load-more-btn {
@@ -171,7 +171,7 @@
 .feed-processing {
     font-size: var(--font-size-xs);
     font-family: var(--font-mono);
-    color: var(--node-evento);
+    color: var(--tag-evento-ink);
     margin-top: var(--space-xs);
     animation: pulse-text 1.5s ease-in-out infinite;
 }
@@ -339,7 +339,7 @@
     font-family: var(--font-sans);
     font-style: italic;
     font-size: var(--font-size-sm);
-    color: var(--node-evento);
+    color: var(--tag-evento-ink);
 }
 .news-evidence{
     font-family: var(--font-serif);
@@ -383,7 +383,7 @@
 .news-claim {
     font-size: var(--font-size-xs);
     font-family: var(--font-mono);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     display: flex;
     align-items: center;
     gap: var(--space-sm);
@@ -392,7 +392,7 @@
 .claim-arrow { opacity: 0.7; }
 
 .loading-inline {
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     font-size: var(--font-size-sm);
 }
 
@@ -575,7 +575,7 @@
 /* --- Ingest section --- */
 .ingest-hint {
     font-size: var(--font-size-xs);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     margin-bottom: var(--space-sm);
 }
 
@@ -681,7 +681,7 @@
 }
 
 .enrich-rel-desc {
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     font-size: var(--font-size-xs);
 }
 
@@ -702,13 +702,13 @@
 .search-loading {
     padding: var(--space-lg);
     text-align: center;
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     font-style: italic;
 }
 
 .web-results-header {
     padding: var(--space-sm) var(--space-md);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     font-size: var(--font-size-sm);
     border-bottom: 1px solid var(--border-default);
 }
@@ -782,7 +782,7 @@
     align-items: center;
     gap: 6px;
     font-size: var(--font-size-xs);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     margin-bottom: var(--space-sm);
 }
 .meta-icon { width: 12px; height: 12px; }
@@ -975,7 +975,7 @@
 }
 .reprocess-status {
     font-size: var(--font-size-xs);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     margin-top: 4px;
     white-space: nowrap;
     overflow: hidden;
@@ -985,7 +985,7 @@
 /* --- Event badges --- */
 .event-type-badge {
     font-size: var(--font-size-xs);
-    color: var(--node-evento);
+    color: var(--tag-evento-ink);
     background: rgba(230, 126, 34, 0.1);
     padding: 2px 8px;
     border-radius: 3px;
@@ -995,7 +995,7 @@
 }
 .event-date-badge {
     font-size: var(--font-size-xs);
-    color: var(--ink-faint);
+    color: var(--ink-muted);
     font-family: var(--font-mono);
 }
 .disputed-badge {

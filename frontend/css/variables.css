@@ -68,8 +68,8 @@
 
     --ink-primary:         #e2e6ec;
     --ink-secondary:       #a0a8b8;
-    --ink-muted:           #7a8194;
-    --ink-faint:           #4a4f5c;
+    --ink-muted:           #848d9f;        /* WCAG AA 5.04:1 on bg-surface */
+    --ink-faint:           #6b7385;        /* 3.5:1 — decorative only; use ink-muted for info text */
     --ink-inverse:         #0f1117;
 
     --border-default:      #2a2e3a;
@@ -80,11 +80,11 @@
     --tag-actor-bg:        rgba(92, 58, 33, 0.3);
     --tag-actor-ink:       #D4A574;
     --tag-evento-bg:       rgba(196, 93, 62, 0.3);
-    --tag-evento-ink:      #C45D3E;
+    --tag-evento-ink:      #E8866C;        /* WCAG AA 4.54:1 on tag bg */
     --tag-afirmacion-bg:   rgba(160, 139, 118, 0.3);
-    --tag-afirmacion-ink:  #A08B76;
+    --tag-afirmacion-ink:  #C4AD96;        /* WCAG AA 4.96:1 on tag bg */
     --tag-noticia-bg:      rgba(107, 87, 68, 0.3);
-    --tag-noticia-ink:     #6B5744;
+    --tag-noticia-ink:     #B09A84;        /* WCAG AA 4.98:1 on tag bg */
 
     /* Graph-specific */
     --graph-bg:            #0f1117;
