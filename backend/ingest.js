@@ -40,14 +40,32 @@ function buildPrompt() {
     const rules = schema.extraction.rules.map((r, i) => `${i + 1}. ${r}`).join('\n');
     const lang = schema.extraction.output_language || 'es';
 
-    return `You are an ontological news analyst for OverStand. Extract structured facts.
+    return `You are an ontological news analyst for Lombardi. Extract structured facts.
 OUTPUT LANGUAGE: ${lang}
 
 RULES:
 ${rules}
 
 EVENT TYPES: ${EVENT_TYPES.join(', ')}
-ENTITY TYPES: ${ENTITY_TYPES.join(', ')}
+
+ENTITY CLASSIFICATION (STRICT):
+- Person: individual humans (politicians, executives, activists). NOT groups.
+- Organization: companies, governments, parties, military forces, NGOs, media outlets, international bodies (NATO, ONU, G7).
+- Location: countries, cities, regions, geographic features (Strait of Hormuz, Mar Negro).
+- Object: ONLY physical objects or specific products (a ship, a weapon, a currency, a document). Use sparingly.
+
+CRITICAL: Do NOT create actors for abstract concepts, strategies, policies, sanctions, or events. Those are the EVENT itself, not actors. Example: "Bloqueo de EE.UU." is an EVENT (SANCION_ECONOMICA), not an Object actor.
+
+EVENT TYPE GUIDE:
+- ACCION_ARMADA: any military attack, bombing, airstrike, shelling — NOT a declaration about an attack
+- AMENAZA_COERCION: explicit threats, ultimatums, warnings of military action
+- DECLARACION_PUBLICA: ONLY when the core news IS the statement itself (press conference, official speech)
+- SANCION_ECONOMICA: economic sanctions, trade bans, asset freezes, embargoes
+- RUPTURA_DIPLOMATICA: expulsion of diplomats, withdrawal from treaties, breaking relations
+- PROTESTA_SOCIAL: demonstrations, strikes, civil unrest
+- DENUNCIA_ACUSACION: formal legal charges, criminal accusations, tribunal proceedings
+
+If in doubt between DECLARACION_PUBLICA and another type, choose the other type. DECLARACION_PUBLICA is a last resort.
 
 Respond with ONLY valid JSON, no markdown:
 {
@@ -63,8 +81,8 @@ Respond with ONLY valid JSON, no markdown:
     {
       "id": "kebab-case",
       "name": "Nombre",
-      "type": "Person|Organization|Location|Object",
-      "description": "descriptor breve en español",
+      "type": "Person|Organization|Location",
+      "description": "descriptor breve en español (rol, cargo, o qué es)",
       "role": "verbo en español que describe su participación en el evento"
     }
   ],
@@ -82,8 +100,8 @@ const PROMPT = buildPrompt();
 // --- Database ---
 
 const pool = new Pool({
-    host: 'localhost', port: 5432, database: 'overstanding',
-    user: 'os_admin', password: 'overstanding_pass'
+    host: 'localhost', port: 5432, database: 'lombardi',
+    user: 'os_admin', password: 'lombardi_pass'
 });
 
 function esc(str) {
@@ -104,7 +122,7 @@ async function initDB() {
         await client.query("LOAD 'age'");
         await client.query("SET search_path = ag_catalog, public");
         // Ensure graph exists
-        await client.query("SELECT create_graph('overstanding')").catch(() => {});
+        await client.query("SELECT create_graph('lombardi')").catch(() => {});
         console.log('OS: DB inicializada.');
     } finally {
         client.release();
@@ -119,17 +137,23 @@ async function extract(newsItem) {
     const response = await fetch(OLLAMA_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(120000),
+        signal: AbortSignal.timeout(180000),
         body: JSON.stringify({
             model: EXTRACTOR_MODEL,
             prompt: PROMPT + input,
             stream: false,
-            options: { temperature: 0.1 }
+            options: {
+                temperature: 0.1,
+                num_predict: 2048,
+                num_ctx: 4096
+            }
         })
     });
 
     const data = await response.json();
-    const raw = data.response.trim();
+    let raw = data.response.trim();
+    // Strip qwen3 <think>...</think> blocks if present
+    raw = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('Ollama no devolvio JSON valido');
     return JSON.parse(jsonMatch[0]);
@@ -174,7 +198,7 @@ async function writeToGraph(client, newsItem, extraction) {
     // 1. Create Evento node
     try {
         await client.query(`
-            SELECT * FROM cypher('overstanding', $$
+            SELECT * FROM cypher('lombardi', $$
                 MERGE (e:Evento {id: '${esc(evt.id)}'})
                 SET e.name = '${esc(evt.name)}',
                     e.event_type = '${esc(evt.event_type)}',
@@ -195,7 +219,7 @@ async function writeToGraph(client, newsItem, extraction) {
     for (const actor of extraction.actors) {
         try {
             await client.query(`
-                SELECT * FROM cypher('overstanding', $$
+                SELECT * FROM cypher('lombardi', $$
                     MERGE (a:Actor {id: '${esc(actor.id)}'})
                     SET a.name = '${esc(actor.name)}',
                         a.type = '${esc(actor.type)}',
@@ -206,7 +230,7 @@ async function writeToGraph(client, newsItem, extraction) {
 
             // PARTICIPA edge with role as metadata
             await client.query(`
-                SELECT * FROM cypher('overstanding', $$
+                SELECT * FROM cypher('lombardi', $$
                     MATCH (a:Actor {id: '${esc(actor.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
                     MERGE (a)-[r:PARTICIPA]->(e)
                     SET r.role = '${esc(actor.role || '')}'
@@ -227,7 +251,7 @@ async function writeToGraph(client, newsItem, extraction) {
             const q = relType === 'PERTENECE_A'
                 ? `MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'}) MERGE (a)-[:PERTENECE_A]->(b) RETURN a, b`
                 : `MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'}) MERGE (a)-[:UBICADO_EN]->(b) RETURN a, b`;
-            await client.query(`SELECT * FROM cypher('overstanding', $$ ${q} $$) as (a agtype, b agtype)`);
+            await client.query(`SELECT * FROM cypher('lombardi', $$ ${q} $$) as (a agtype, b agtype)`);
         } catch {}
     }
 }
@@ -321,7 +345,7 @@ async function startWatcher() {
 }
 
 async function main() {
-    console.log('=== OverStand — Ingesta v2 ===\n');
+    console.log('=== Lombardi — Ingesta v2 ===\n');
     await initDB();
     await processAll();
     await startWatcher();

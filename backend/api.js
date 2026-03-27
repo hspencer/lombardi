@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -11,9 +12,9 @@ const SCHEMA_PATH = path.join(__dirname, '../data/schema.json');
 const pool = new Pool({
     host: 'localhost',
     port: 5432,
-    database: 'overstanding',
+    database: 'lombardi',
     user: 'os_admin',
-    password: 'overstanding_pass'
+    password: 'lombardi_pass'
 });
 
 function readBody(req) {
@@ -53,7 +54,7 @@ async function ageQuery(cypher) {
     try {
         await client.query("LOAD 'age'");
         await client.query("SET search_path = ag_catalog, public");
-        const res = await client.query(`SELECT * FROM cypher('overstanding', $$ ${cypher} $$) as (v agtype)`);
+        const res = await client.query(`SELECT * FROM cypher('lombardi', $$ ${cypher} $$) as (v agtype)`);
         return res.rows.map(r => parseAgtype(r.v));
     } finally {
         client.release();
@@ -67,7 +68,7 @@ async function ageQuery2(cypher, cols) {
         await client.query("LOAD 'age'");
         await client.query("SET search_path = ag_catalog, public");
         const colDef = cols.map(c => `${c} agtype`).join(', ');
-        const res = await client.query(`SELECT * FROM cypher('overstanding', $$ ${cypher} $$) as (${colDef})`);
+        const res = await client.query(`SELECT * FROM cypher('lombardi', $$ ${cypher} $$) as (${colDef})`);
         return res.rows.map(row => {
             const obj = {};
             cols.forEach(c => { obj[c] = parseAgtype(row[c]); });
@@ -84,6 +85,7 @@ async function handleAPI(req, res) {
     // === EGOSISTEMA: nodo focal + grado 1 + grado 2 ===
     if (url.pathname === '/api/ego') {
         let focalId = url.searchParams.get('id');
+        const maxDegree = Math.min(3, Math.max(1, parseInt(url.searchParams.get('degree') || '2')));
 
         // Si no hay ID, mostrar el evento más reciente o un actor relevante
         if (!focalId) {
@@ -119,12 +121,7 @@ async function handleAPI(req, res) {
         }
         const focal = flat(focalRaw[0]);
 
-        // Grado 1: vecinos directos + aristas
-        const g1 = await ageQuery2(
-            `MATCH (f {id: '${safeId}'})-[r]-(n1) RETURN n1, r`,
-            ['n1', 'r']
-        ).catch(() => []);
-
+        // Build ego graph iteratively by degree
         const nodesMap = new Map();
         nodesMap.set(focal.id, { ...focal, _degree: 0 });
 
@@ -136,7 +133,6 @@ async function handleAPI(req, res) {
             const key = `${r.start_id}-${r.end_id}-${r.label}`;
             if (edgesSet.has(key)) return;
             edgesSet.add(key);
-            // We need to resolve IDs from the nodes we've seen
             edges.push({
                 _startAgId: r.start_id,
                 _endAgId: r.end_id,
@@ -145,55 +141,29 @@ async function handleAPI(req, res) {
             });
         }
 
-        for (const row of g1) {
-            const n = flat(row.n1);
-            if (!nodesMap.has(n.id)) {
-                nodesMap.set(n.id, { ...n, _degree: 1 });
-            }
-            addEdge(row.r);
-        }
+        // Expand degree by degree: each degree = one hop from previous frontier
+        for (let deg = 1; deg <= maxDegree; deg++) {
+            const frontierIds = [...nodesMap.values()].filter(n => n._degree === deg - 1).map(n => esc(n.id));
+            if (frontierIds.length === 0) break;
 
-        // Grado 2: vecinos de los vecinos
-        const g1Ids = [...nodesMap.values()].filter(n => n._degree === 1).map(n => esc(n.id));
-
-        if (g1Ids.length > 0) {
-            // Batch query for degree 2 — only Actor nodes (filter out Afirmacion/Noticia noise)
-            for (const nId of g1Ids.slice(0, 20)) {
-                const g2 = await ageQuery2(
-                    `MATCH (n1 {id: '${nId}'})-[r]-(n2) WHERE n2.id <> '${safeId}' AND (n2:Actor OR n2:Evento) RETURN n2, r`,
+            const limit = deg === 1 ? 50 : deg === 2 ? 20 : 10;
+            for (const nId of frontierIds.slice(0, limit)) {
+                const neighbors = await ageQuery2(
+                    `MATCH (n1 {id: '${nId}'})-[r]-(n2) WHERE label(n2) IN ['Actor', 'Evento'] RETURN n2, r`,
                     ['n2', 'r']
-                ).catch(() => []);
+                ).catch(err => { console.error(`Ego expand deg=${deg} nId=${nId}:`, err.message); return []; });
 
-                for (const row of g2) {
+                for (const row of neighbors) {
                     const n2 = flat(row.n2);
                     if (!nodesMap.has(n2.id)) {
-                        nodesMap.set(n2.id, { ...n2, _degree: 2 });
+                        nodesMap.set(n2.id, { ...n2, _degree: deg });
                     }
                     addEdge(row.r);
                 }
             }
         }
 
-        // Resolve edge source/target from agtype IDs to our property IDs
-        // Build agId → propertyId map
-        const agIdMap = new Map();
-        for (const row of g1) {
-            agIdMap.set(row.n1.id, flat(row.n1).id);
-        }
-        // Also from g2 we need the focal
-        agIdMap.set(focalRaw[0].id, focal.id);
-
-        // For degree 2 edges, we need all node agIds
-        // Simpler approach: resolve edges by matching source/target in nodesMap
-        const resolvedEdges = edges.map(e => {
-            const sourceNode = [...nodesMap.values()].find(n => {
-                // Match by checking if this node was part of the edge
-                return false; // fallback
-            });
-            return e;
-        });
-
-        // Better approach: query edges with property IDs directly
+        // Query all edges between known nodes using property IDs
         const allIds = [...nodesMap.keys()].map(id => `'${esc(id)}'`).join(',');
 
         // Get all edges between known nodes
@@ -217,70 +187,80 @@ async function handleAPI(req, res) {
         return;
     }
 
-    // === NOTICIAS vinculadas a un nodo ===
+    // === NOTICIAS vinculadas a un nodo (v2: via Evento.source_url) ===
     if (url.pathname === '/api/news' && url.searchParams.get('id')) {
         const id = esc(url.searchParams.get('id'));
 
-        // Buscar noticias conectadas al nodo via: Noticia-REPORTA->Afirmacion-INVOLUCRA->Actor
-        // O directamente si es una Afirmacion o Noticia
         const client = await pool.connect();
         try {
             await client.query("LOAD 'age'");
             await client.query("SET search_path = ag_catalog, public");
 
-            // Noticias que mencionan a este actor (via afirmaciones)
-            const viaActor = await client.query(`
-                SELECT * FROM cypher('overstanding', $$
-                    MATCH (n:Noticia)-[:REPORTA]->(c:Afirmacion)-[:INVOLUCRA]->(a:Actor {id: '${id}'})
-                    RETURN {id: n.id, title: n.title, source: n.source, link: n.link, lang: n.lang,
-                            claim: c.predicate, subject: c.subject, object: c.object,
-                            event_type: c.event_type, is_disputed: c.is_disputed}
-                $$) as (v agtype)
+            // Collect source_urls from connected Eventos
+            let sourceUrls = [];
+
+            // If it's an Evento: get its own source_url
+            const directEvt = await client.query(`
+                SELECT * FROM cypher('lombardi', $$
+                    MATCH (e:Evento {id: '${id}'})
+                    RETURN e.source_url, e.name, e.event_type, e.evidence_quote
+                $$) as (url agtype, name agtype, etype agtype, quote agtype)
             `).catch(() => ({ rows: [] }));
 
-            // Noticias que reportan esta afirmación directamente
-            const viaClaim = await client.query(`
-                SELECT * FROM cypher('overstanding', $$
-                    MATCH (n:Noticia)-[:REPORTA]->(c:Afirmacion {id: '${id}'})
-                    RETURN {id: n.id, title: n.title, source: n.source, link: n.link, lang: n.lang,
-                            claim: c.predicate, subject: c.subject, object: c.object,
-                            event_type: c.event_type, is_disputed: c.is_disputed}
-                $$) as (v agtype)
-            `).catch(() => ({ rows: [] }));
-
-            const allRows = [...viaActor.rows, ...viaClaim.rows];
-            const newsItems = allRows.map(r => parseAgtype(r.v));
-
-            // Deduplicar por id de noticia
-            const seen = new Map();
-            for (const item of newsItems) {
-                if (!seen.has(item.id)) seen.set(item.id, item);
+            const eventMeta = [];
+            for (const row of directEvt.rows) {
+                const u = JSON.parse(row.url || 'null');
+                if (u) {
+                    sourceUrls.push(u);
+                    eventMeta.push({ url: u, name: JSON.parse(row.name || 'null'), event_type: JSON.parse(row.etype || 'null'), evidence_quote: JSON.parse(row.quote || 'null') });
+                }
             }
 
-            // Enriquecer con pub_date de la tabla SQL
-            const newsWithDates = [];
-            for (const item of seen.values()) {
+            // If it's an Actor: find all Eventos it PARTICIPA in
+            const actorEvts = await client.query(`
+                SELECT * FROM cypher('lombardi', $$
+                    MATCH (a:Actor {id: '${id}'})-[r:PARTICIPA]->(e:Evento)
+                    RETURN e.source_url, e.name, e.event_type, e.evidence_quote, r.role
+                $$) as (url agtype, name agtype, etype agtype, quote agtype, role agtype)
+            `).catch(() => ({ rows: [] }));
+
+            for (const row of actorEvts.rows) {
+                const u = JSON.parse(row.url || 'null');
+                if (u && !sourceUrls.includes(u)) {
+                    sourceUrls.push(u);
+                    eventMeta.push({ url: u, name: JSON.parse(row.name || 'null'), event_type: JSON.parse(row.etype || 'null'), evidence_quote: JSON.parse(row.quote || 'null'), role: JSON.parse(row.role || 'null') });
+                }
+            }
+
+            // Fetch from SQL by source_url
+            const newsItems = [];
+            for (const sUrl of sourceUrls) {
                 const sqlRow = await client.query(
-                    "SELECT pub_date, description FROM news_raw WHERE link = $1 LIMIT 1",
-                    [item.link]
+                    "SELECT * FROM public.news_raw WHERE link = $1 LIMIT 1",
+                    [sUrl]
                 ).catch(() => ({ rows: [] }));
 
-                newsWithDates.push({
-                    ...item,
-                    pub_date: sqlRow.rows[0]?.pub_date || null,
-                    description: sqlRow.rows[0]?.description || null
-                });
+                if (sqlRow.rows[0]) {
+                    const meta = eventMeta.find(m => m.url === sUrl) || {};
+                    newsItems.push({
+                        ...sqlRow.rows[0],
+                        _eventName: meta.name,
+                        _eventType: meta.event_type,
+                        _evidenceQuote: meta.evidence_quote,
+                        _role: meta.role
+                    });
+                }
             }
 
-            // Ordenar por fecha descendente
-            newsWithDates.sort((a, b) => {
+            // Sort by date desc
+            newsItems.sort((a, b) => {
                 const da = a.pub_date ? new Date(a.pub_date) : new Date(0);
                 const db = b.pub_date ? new Date(b.pub_date) : new Date(0);
                 return db - da;
             });
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(newsWithDates));
+            res.end(JSON.stringify(newsItems));
         } finally {
             client.release();
         }
@@ -290,13 +270,14 @@ async function handleAPI(req, res) {
     // === NODE EDIT: cambiar tipo, nombre, descripción ===
     if (url.pathname === '/api/node/update' && req.method === 'POST') {
         const body = JSON.parse(await readBody(req));
-        const { id, name, type, description } = body;
+        const { id, name, type, description, event_type } = body;
         if (!id) { res.writeHead(400); res.end('{"error":"id required"}'); return; }
 
         const sets = [];
         if (name !== undefined) sets.push(`n.name = '${esc(name)}'`);
         if (type !== undefined) sets.push(`n.type = '${esc(type)}'`);
         if (description !== undefined) sets.push(`n.description = '${esc(description)}'`);
+        if (event_type !== undefined) sets.push(`n.event_type = '${esc(event_type)}'`);
 
         if (sets.length > 0) {
             await ageQuery(`MATCH (n {id: '${esc(id)}'}) SET ${sets.join(', ')} RETURN n`);
@@ -415,7 +396,7 @@ async function handleAPI(req, res) {
             // 1. Reasignar todas las aristas del nodo a eliminar al nodo que se queda
             // Aristas entrantes
             await client.query(`
-                SELECT * FROM cypher('overstanding', $$
+                SELECT * FROM cypher('lombardi', $$
                     MATCH (n {id: '${esc(removeId)}'})<-[r]-(m)
                     WHERE m.id <> '${esc(keepId)}'
                     RETURN m.id, type(r)
@@ -426,7 +407,7 @@ async function handleAPI(req, res) {
                     const rtype = JSON.parse(row.rtype);
                     // Crear la misma arista hacia keepId
                     await client.query(`
-                        SELECT * FROM cypher('overstanding', $$
+                        SELECT * FROM cypher('lombardi', $$
                             MATCH (m {id: '${esc(mid)}'}), (k {id: '${esc(keepId)}'})
                             MERGE (m)-[:${rtype}]->(k)
                             RETURN m, k
@@ -437,7 +418,7 @@ async function handleAPI(req, res) {
 
             // Aristas salientes
             await client.query(`
-                SELECT * FROM cypher('overstanding', $$
+                SELECT * FROM cypher('lombardi', $$
                     MATCH (n {id: '${esc(removeId)}'})-[r]->(m)
                     WHERE m.id <> '${esc(keepId)}'
                     RETURN m.id, type(r)
@@ -447,7 +428,7 @@ async function handleAPI(req, res) {
                     const mid = JSON.parse(row.mid);
                     const rtype = JSON.parse(row.rtype);
                     await client.query(`
-                        SELECT * FROM cypher('overstanding', $$
+                        SELECT * FROM cypher('lombardi', $$
                             MATCH (k {id: '${esc(keepId)}'}), (m {id: '${esc(mid)}'})
                             MERGE (k)-[:${rtype}]->(m)
                             RETURN k, m
@@ -458,7 +439,7 @@ async function handleAPI(req, res) {
 
             // 2. Eliminar el nodo viejo (y sus aristas)
             await client.query(`
-                SELECT * FROM cypher('overstanding', $$
+                SELECT * FROM cypher('lombardi', $$
                     MATCH (n {id: '${esc(removeId)}'})
                     DETACH DELETE n
                 $$) as (v agtype)
@@ -466,7 +447,7 @@ async function handleAPI(req, res) {
 
             // 3. Actualizar el nodo que se queda
             await client.query(`
-                SELECT * FROM cypher('overstanding', $$
+                SELECT * FROM cypher('lombardi', $$
                     MATCH (n {id: '${esc(keepId)}'})
                     SET n.name = '${esc(canonicalName)}', n.type = '${esc(canonicalType)}'
                     RETURN n
@@ -634,7 +615,7 @@ async function handleAPI(req, res) {
 
                     // Actualizar descripción del nodo
                     await client.query(`
-                        SELECT * FROM cypher('overstanding', $$
+                        SELECT * FROM cypher('lombardi', $$
                             MATCH (n {id: '${esc(id)}'})
                             SET n.description = '${esc(description)}', n.wikidata = '${esc(qid)}'
                             RETURN n
@@ -648,7 +629,7 @@ async function handleAPI(req, res) {
 
                         // Crear nodo target
                         await client.query(`
-                            SELECT * FROM cypher('overstanding', $$
+                            SELECT * FROM cypher('lombardi', $$
                                 MERGE (a:Actor {id: '${esc(r.target_id)}'})
                                 SET a.name = '${esc(r.target_name)}', a.description = '${esc(r.target_desc)}'
                                 RETURN a
@@ -662,7 +643,7 @@ async function handleAPI(req, res) {
                             PERTENECE_A: `MATCH (a {id: '${esc(id)}'}), (b:Actor {id: '${esc(r.target_id)}'}) MERGE (a)-[:PERTENECE_A]->(b) RETURN a, b`
                         };
                         await client.query(`
-                            SELECT * FROM cypher('overstanding', $$ ${relQueries[r.relation]} $$) as (a agtype, b agtype)
+                            SELECT * FROM cypher('lombardi', $$ ${relQueries[r.relation]} $$) as (a agtype, b agtype)
                         `).catch(() => {});
                     }
                 } finally {
@@ -679,7 +660,260 @@ async function handleAPI(req, res) {
         return;
     }
 
+    // === UPDATE NODE FIELD ===
+    const updateMatch = url.pathname.match(/^\/api\/node\/(.+)\/update$/);
+    if (updateMatch && req.method === 'POST') {
+        const nodeId = decodeURIComponent(updateMatch[1]);
+        const body = JSON.parse(await readBody(req));
+        // Build SET clauses for each field
+        const setClauses = [];
+        for (const [key, val] of Object.entries(body)) {
+            if (['name', 'description', 'type', 'event_type', 'evidence_quote'].includes(key)) {
+                setClauses.push(`n.${key} = '${esc(String(val))}'`);
+            }
+        }
+        if (!setClauses.length) { res.writeHead(400); res.end('{"error":"no valid fields"}'); return; }
+        try {
+            await ageQuery(`MATCH (n {id: '${esc(nodeId)}'}) SET ${setClauses.join(', ')}`);
+            res.writeHead(200, JSON_H);
+            res.end(JSON.stringify({ ok: true, updated: nodeId }));
+        } catch (e) {
+            res.writeHead(500, JSON_H);
+            res.end(JSON.stringify({ error: e.message }));
+        }
+        return;
+    }
+
     // === DELETE NODE ===
+    // === DISCOVER latent relationships ===
+    if (url.pathname === '/api/node/discover' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { id } = body;
+        if (!id) { res.writeHead(400); res.end('{"error":"id required"}'); return; }
+
+        // SSE for progress
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+        function emit(type, data) {
+            res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+        }
+
+        try {
+            // 1. Get the focal node
+            const focalNodes = await ageQuery(`MATCH (n {id: '${esc(id)}'}) RETURN n`);
+            if (!focalNodes.length) {
+                emit('error', { message: 'Nodo no encontrado' });
+                res.end(); return;
+            }
+            const focal = focalNodes[0];
+            emit('status', { message: `Analizando ${focal.name || id}...` });
+
+            // 2. Get current neighbors (already connected)
+            const neighbors = await ageQuery2(
+                `MATCH (n {id: '${esc(id)}'})-[r]-(m) RETURN m, r`, ['m', 'r']
+            );
+            const connectedIds = new Set(neighbors.map(n => n.m.id));
+            connectedIds.add(id);
+
+            // 3. Get ALL nodes in the graph not connected to focal
+            const allNodes = await ageQuery(`MATCH (n) WHERE n.id <> '${esc(id)}' RETURN n`);
+            const unconnected = allNodes.filter(n => !connectedIds.has(n.id));
+
+            emit('status', { message: `${connectedIds.size - 1} conexiones actuales, ${unconnected.length} nodos sin vínculo directo` });
+
+            // 4. Alias-based discovery — find synonym matches
+            const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+            const focalEntry = aliasData.entities[id];
+            const focalNames = focalEntry
+                ? [focalEntry.canonical, ...(focalEntry.aliases || [])].map(s => s.toLowerCase())
+                : [focal.name?.toLowerCase(), id.replace(/-/g, ' ')].filter(Boolean);
+
+            const aliasMatches = [];
+            for (const node of unconnected) {
+                const nodeEntry = aliasData.entities[node.id];
+                const nodeNames = nodeEntry
+                    ? [nodeEntry.canonical, ...(nodeEntry.aliases || [])].map(s => s.toLowerCase())
+                    : [node.name?.toLowerCase(), String(node.id).replace(/-/g, ' ')].filter(Boolean);
+
+                if (focalNames.some(fn => nodeNames.includes(fn)) || nodeNames.some(nn => focalNames.includes(nn))) {
+                    aliasMatches.push(node);
+                }
+            }
+
+            // Create edges for alias matches (these are the same entity or direct synonyms)
+            for (const match of aliasMatches) {
+                const focalLabel = focal.label || (focal.event_type ? 'Evento' : 'Actor');
+                const matchLabel = match.label || (match.event_type ? 'Evento' : 'Actor');
+                // If same label type, they might be duplicates — suggest merge via COMPLEMENTA
+                const relType = focalLabel === matchLabel ? 'COMPLEMENTA' : 'PARTICIPA';
+                await ageQuery(`
+                    MATCH (a {id: '${esc(id)}'}), (b {id: '${esc(match.id)}'})
+                    MERGE (a)-[r:${relType}]->(b)
+                    SET r.role = 'sinónimo detectado'
+                    RETURN a, b
+                `).catch(() => {});
+                emit('discovered', {
+                    edge: { source: id, target: match.id, type: relType, role: 'sinónimo detectado' },
+                    targetNode: match,
+                    reason: 'alias match'
+                });
+            }
+
+            if (aliasMatches.length) {
+                emit('status', { message: `${aliasMatches.length} sinónimos vinculados` });
+            }
+
+            // 5. Co-occurrence: find nodes that share events with focal's events
+            let cooccurrence = [];
+            if (focal.label === 'Actor' || !focal.event_type) {
+                const shared = await ageQuery2(`
+                    MATCH (a {id: '${esc(id)}'})-[:PARTICIPA]->(e:Evento)<-[:PARTICIPA]-(b)
+                    WHERE b.id <> '${esc(id)}'
+                    RETURN DISTINCT b, count(e) as cnt
+                `, ['b', 'cnt']).catch(() => []) || [];
+
+                cooccurrence = shared.filter(s => !connectedIds.has(s.b.id) && s.cnt >= 1);
+
+                // Auto-link co-occurrences (share at least 1 event but no direct edge)
+                for (const co of cooccurrence) {
+                    await ageQuery(`
+                        MATCH (a {id: '${esc(id)}'}), (b {id: '${esc(co.b.id)}'})
+                        MERGE (a)-[r:COMPLEMENTA]->(b)
+                        SET r.role = 'co-ocurrencia en ${co.cnt} eventos'
+                        RETURN a, b
+                    `).catch(() => {});
+                    emit('discovered', {
+                        edge: { source: id, target: co.b.id, type: 'COMPLEMENTA', role: `co-ocurrencia en ${co.cnt} eventos` },
+                        targetNode: co.b,
+                        reason: `${co.cnt} eventos compartidos`
+                    });
+                }
+                if (cooccurrence.length) {
+                    emit('status', { message: `${cooccurrence.length} co-ocurrencias vinculadas` });
+                }
+            }
+
+            // 6. LLM-based discovery — ask Claude for semantic relationships
+            const apiKey = process.env.CLAUDE_API_KEY;
+            let llmDiscovered = [];
+
+            if (apiKey && unconnected.length > 0) {
+                emit('status', { message: 'Buscando relaciones semánticas con IA...' });
+
+                // Build context: focal + its neighbors + a sample of unconnected nodes
+                const candidateNodes = [
+                    ...cooccurrence.map(c => c.b),
+                    ...unconnected.filter(n => n.label === 'Actor' || n.event_type).slice(0, 30)
+                ];
+                // Deduplicate
+                const seen = new Set();
+                const uniqueCandidates = candidateNodes.filter(n => {
+                    if (seen.has(n.id)) return false;
+                    if (connectedIds.has(n.id)) return false;
+                    seen.add(n.id);
+                    return true;
+                }).slice(0, 40);
+
+                if (uniqueCandidates.length > 0) {
+                    const focalDesc = `${focal.name} (${focal.type || focal.event_type || 'Actor'}): ${focal.description || ''}`;
+                    const neighborsDesc = neighbors.slice(0, 10).map(n =>
+                        `  - ${n.m.name} (${n.m.type || n.m.event_type || '?'}) [${n.r.label || '?'}]`
+                    ).join('\n');
+                    const candidatesDesc = uniqueCandidates.map(n =>
+                        `  - id:"${n.id}" name:"${n.name}" type:${n.type || n.event_type || '?'} desc:"${n.description || ''}"`
+                    ).join('\n');
+
+                    const SCHEMA = JSON.parse(fs.readFileSync(path.join(__dirname, '../data/schema.json'), 'utf-8'));
+                    const edgeTypes = Object.keys(SCHEMA.graph?.edges || {}).join(', ');
+
+                    const prompt = `You are an ontological analyst for Lombardi, a geopolitical knowledge graph.
+
+FOCAL NODE: ${focalDesc}
+CURRENT CONNECTIONS:
+${neighborsDesc || '  (none)'}
+
+CANDIDATE NODES (not yet connected to focal):
+${candidatesDesc}
+
+EDGE TYPES available: ${edgeTypes}
+
+TASK: Identify which candidates SHOULD be connected to the focal node and WHY.
+Only propose relationships that are factually grounded (not speculative).
+For each, specify the edge type and direction.
+
+Respond with ONLY valid JSON array:
+[{"source":"source-id","target":"target-id","type":"EDGE_TYPE","role":"brief reason in Spanish"}]
+
+If no relationships are warranted, return [].`;
+
+                    try {
+                        const llmRes = await fetch('https://api.anthropic.com/v1/messages', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-api-key': apiKey,
+                                'anthropic-version': '2023-06-01'
+                            },
+                            signal: AbortSignal.timeout(60000),
+                            body: JSON.stringify({
+                                model: 'claude-haiku-4-5-20251001',
+                                max_tokens: 2048,
+                                messages: [{ role: 'user', content: prompt }]
+                            })
+                        });
+                        const llmData = await llmRes.json();
+                        const text = (llmData.content?.[0]?.text || '').trim();
+                        const jsonMatch = text.match(/\[[\s\S]*\]/);
+                        if (jsonMatch) {
+                            llmDiscovered = JSON.parse(jsonMatch[0]);
+                        }
+                    } catch (err) {
+                        emit('status', { message: `LLM: ${err.message}` });
+                    }
+                }
+            }
+
+            // 7. Write LLM-discovered edges to graph
+            let created = 0;
+            for (const rel of llmDiscovered) {
+                if (!rel.source || !rel.target || !rel.type) continue;
+                // Validate edge type
+                const validTypes = ['PARTICIPA', 'CAUSA', 'CONTRADICE', 'COMPLEMENTA', 'DESMIENTE', 'ACTUALIZA', 'UBICADO_EN', 'PERTENECE_A'];
+                if (!validTypes.includes(rel.type)) continue;
+
+                await ageQuery(`
+                    MATCH (a {id: '${esc(rel.source)}'}), (b {id: '${esc(rel.target)}'})
+                    MERGE (a)-[r:${rel.type}]->(b)
+                    SET r.role = '${esc(rel.role || '')}'
+                    RETURN a, b
+                `).catch(() => {});
+
+                // Find the target node data for the frontend
+                const targetNode = unconnected.find(n => n.id === rel.target) || allNodes.find(n => n.id === rel.target);
+                emit('discovered', {
+                    edge: rel,
+                    targetNode: targetNode || { id: rel.target, name: rel.target },
+                    reason: rel.role
+                });
+                created++;
+            }
+
+            emit('done', {
+                aliasMatches: aliasMatches.length,
+                cooccurrences: cooccurrence.length,
+                llmDiscovered: created,
+                total: aliasMatches.length + created
+            });
+        } catch (err) {
+            emit('error', { message: err.message });
+        }
+        res.end();
+        return;
+    }
+
     if (url.pathname === '/api/node/delete' && req.method === 'POST') {
         const body = JSON.parse(await readBody(req));
         const { id } = body;
@@ -749,8 +983,8 @@ async function handleAPI(req, res) {
         (async () => {
             const { Pool: PgPool } = require('pg');
             const ingestPool = new PgPool({
-                host: 'localhost', port: 5432, database: 'overstanding',
-                user: 'os_admin', password: 'overstanding_pass'
+                host: 'localhost', port: 5432, database: 'lombardi',
+                user: 'os_admin', password: 'lombardi_pass'
             });
 
             for (const filename of filenames) {
@@ -873,43 +1107,47 @@ async function handleAPI(req, res) {
     // === NEWS FEED (all news with processing status) ===
     if (url.pathname === '/api/news/feed') {
         const page = parseInt(url.searchParams.get('page') || '0');
+        const sort = url.searchParams.get('sort') || 'date';
         const limit = 30;
         const offset = page * limit;
 
         const client = await pool.connect();
         try {
-            // Get news from SQL table (most recent first)
+            // Sort: date (most recent) or relevance (processed first, then by connections)
+            const orderClause = sort === 'relevance'
+                ? 'ORDER BY processed DESC, ingested_at DESC NULLS LAST'
+                : 'ORDER BY pub_date DESC NULLS LAST';
+
             const result = await client.query(
-                `SELECT * FROM news_raw ORDER BY pub_date DESC NULLS LAST LIMIT $1 OFFSET $2`,
+                `SELECT * FROM public.news_raw ${orderClause} LIMIT $1 OFFSET $2`,
                 [limit, offset]
             );
-            const total = await client.query('SELECT count(*) FROM news_raw');
+            const total = await client.query('SELECT count(*) FROM public.news_raw');
 
-            // Check which have graph nodes
+            // Check which have Evento nodes in graph (v2: match by source_url)
             await client.query("LOAD 'age'");
             await client.query("SET search_path = ag_catalog, public");
 
             const items = [];
             for (const row of result.rows) {
-                const newsId = Buffer.from(row.link || '').toString('base64').slice(0, 20);
-                // Check if noticia node exists in graph
-                const inGraph = await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
-                        MATCH (n:Noticia {id: '${esc(newsId)}'}) RETURN count(n)
-                    $$) as (c agtype)
-                `).catch(() => ({ rows: [{ c: '0' }] }));
+                const linkEsc = esc(row.link || '');
+                const evtResult = await client.query(`
+                    SELECT * FROM cypher('lombardi', $$
+                        MATCH (e:Evento {source_url: '${linkEsc}'})
+                        OPTIONAL MATCH (a:Actor)-[:PARTICIPA]->(e)
+                        RETURN e.name, count(a)
+                    $$) as (ename agtype, acnt agtype)
+                `).catch(() => ({ rows: [] }));
 
-                const claimCount = await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
-                        MATCH (n:Noticia {id: '${esc(newsId)}'})-[:REPORTA]->(c:Afirmacion) RETURN count(c)
-                    $$) as (c agtype)
-                `).catch(() => ({ rows: [{ c: '0' }] }));
+                const inGraph = evtResult.rows.length > 0;
+                const evtName = inGraph ? JSON.parse(evtResult.rows[0]?.ename || 'null') : null;
+                const actorCount = inGraph ? parseInt(JSON.parse(evtResult.rows[0]?.acnt || '0')) : 0;
 
                 items.push({
                     ...row,
-                    _newsId: newsId,
-                    _inGraph: parseInt(JSON.parse(inGraph.rows[0]?.c || '0')) > 0,
-                    _claimCount: parseInt(JSON.parse(claimCount.rows[0]?.c || '0'))
+                    _inGraph: inGraph,
+                    _eventName: evtName,
+                    _actorCount: actorCount
                 });
             }
 
@@ -926,73 +1164,79 @@ async function handleAPI(req, res) {
     }
 
     // === NEWS PROCESS + EGO (process a news item on demand, return its graph) ===
+    // === PROCESS NEWS — SSE streaming: emits nodes as they are created ===
     if (url.pathname === '/api/news/process' && req.method === 'POST') {
         const body = JSON.parse(await readBody(req));
-        const { link } = body;
-        if (!link) { res.writeHead(400); res.end('{"error":"link required"}'); return; }
+        const { link, title, source, description, contextNodeId } = body;
+        if (!link && !title) { res.writeHead(400); res.end('{"error":"link or title required"}'); return; }
+
+        // Setup SSE
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+        function emit(type, data) {
+            res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+        }
 
         const RAW_DIR = path.join(__dirname, '../data/raw_news');
         const PROC_DIR = path.join(RAW_DIR, '.processed');
 
-        // Find the raw file by link
-        const allFiles = [...fs.readdirSync(RAW_DIR), ...(fs.existsSync(PROC_DIR) ? fs.readdirSync(PROC_DIR).map(f => '.processed/' + f) : [])];
+        // Find the raw file by link or build a newsItem from params
         let newsItem = null;
         let extractionData = null;
 
-        for (const file of allFiles) {
-            if (!file.endsWith('.json') || file.endsWith('.extraction.json')) continue;
-            try {
-                const fullPath = path.join(RAW_DIR, file);
-                const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
-                if (content.link === link) {
-                    newsItem = content;
-                    // Check for extraction
-                    const extPath = fullPath.replace('.json', '.extraction.json');
-                    if (fs.existsSync(extPath)) {
-                        extractionData = JSON.parse(fs.readFileSync(extPath, 'utf-8'));
+        if (link) {
+            const allFiles = [...fs.readdirSync(RAW_DIR), ...(fs.existsSync(PROC_DIR) ? fs.readdirSync(PROC_DIR).map(f => '.processed/' + f) : [])];
+            for (const file of allFiles) {
+                if (!file.endsWith('.json') || file.endsWith('.extraction.json')) continue;
+                try {
+                    const fullPath = path.join(RAW_DIR, file);
+                    const content = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
+                    if (content.link === link) {
+                        newsItem = content;
+                        const extPath = fullPath.replace('.json', '.extraction.json');
+                        if (fs.existsSync(extPath)) {
+                            extractionData = JSON.parse(fs.readFileSync(extPath, 'utf-8'));
+                        }
+                        break;
                     }
-                    break;
-                }
-            } catch {}
+                } catch {}
+            }
         }
 
+        // If not found in raw_news, build from params (web search results)
         if (!newsItem) {
-            res.writeHead(404); res.end('{"error":"news not found"}'); return;
+            newsItem = { title: title || '', link: link || '', source_name: source || 'Web', description: description || '', source_lang: 'multi' };
         }
 
-        // If no extraction, process with Ollama now
+        emit('status', { message: 'Extrayendo con Claude...' });
+
+        // Extract if needed
         if (!extractionData) {
             try {
-                const { extract } = require('./ingest-extract.js');
-                // Inline extraction using Ollama
-                const ollamaRes = await fetch('http://localhost:11434/api/generate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    signal: AbortSignal.timeout(120000),
-                    body: JSON.stringify({
-                        model: JSON.parse(fs.readFileSync(path.join(__dirname, '../data/schema.json'), 'utf-8')).extraction.models.extractor.model,
-                        prompt: `Extract event and actors from: Title: ${newsItem.title}\nSource: ${newsItem.source_name}\nDescription: ${newsItem.description}`,
-                        stream: false,
-                        options: { temperature: 0.1 }
-                    })
-                });
-                const data = await ollamaRes.json();
-                const jsonMatch = data.response?.match(/\{[\s\S]*\}/);
-                if (jsonMatch) extractionData = JSON.parse(jsonMatch[0]);
+                const { extractFromNewsFast, extractFromNews } = require('./extractor.js');
+                try {
+                    extractionData = await extractFromNewsFast(newsItem);
+                } catch (fastErr) {
+                    emit('status', { message: 'Claude falló, usando Ollama...' });
+                    extractionData = await extractFromNews(newsItem);
+                }
             } catch (err) {
-                res.writeHead(500);
-                res.end(JSON.stringify({ error: 'Extraction failed: ' + err.message }));
+                emit('error', { message: err.message });
+                res.end();
                 return;
             }
         }
 
         if (!extractionData?.event) {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ focal: null, nodes: [], edges: [], extraction: extractionData }));
+            emit('error', { message: 'No se pudo extraer evento' });
+            res.end();
             return;
         }
 
-        // Write to graph
+        // Write to graph, emitting each node as it's created
         const client = await pool.connect();
         try {
             await client.query("LOAD 'age'");
@@ -1000,58 +1244,138 @@ async function handleAPI(req, res) {
 
             const evt = extractionData.event;
             const actors = extractionData.actors || [];
+            const relations = extractionData.actor_relations || [];
 
-            // Create event
+            // 1. Create Evento — emit immediately
             await client.query(`
-                SELECT * FROM cypher('overstanding', $$
+                SELECT * FROM cypher('lombardi', $$
                     MERGE (e:Evento {id: '${esc(evt.id)}'})
                     SET e.name = '${esc(evt.name)}', e.event_type = '${esc(evt.event_type)}',
                         e.date = '${esc(evt.date || '')}', e.source = '${esc(newsItem.source_name)}',
-                        e.source_url = '${esc(newsItem.link)}'
+                        e.source_url = '${esc(newsItem.link)}',
+                        e.evidence_quote = '${esc(evt.evidence_quote || '')}'
                     RETURN e
                 $$) as (e agtype)
             `).catch(() => {});
 
-            // Create actors + PARTICIPA
+            const eventNode = { ...evt, label: 'Evento', _degree: 0 };
+            emit('focal', { node: eventNode });
+
+            // 2. Create each Actor + PARTICIPA — emit one by one
             for (const a of actors) {
                 await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
+                    SELECT * FROM cypher('lombardi', $$
                         MERGE (a:Actor {id: '${esc(a.id)}'})
-                        SET a.name = '${esc(a.name)}', a.type = '${esc(a.type)}', a.description = '${esc(a.description || '')}'
+                        SET a.name = '${esc(a.name)}', a.type = '${esc(a.type)}',
+                            a.description = '${esc(a.description || '')}'
                         RETURN a
                     $$) as (a agtype)
                 `).catch(() => {});
 
                 await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
+                    SELECT * FROM cypher('lombardi', $$
                         MATCH (a:Actor {id: '${esc(a.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
                         MERGE (a)-[r:PARTICIPA]->(e)
                         SET r.role = '${esc(a.role || '')}'
                         RETURN a, e
                     $$) as (a agtype, e agtype)
                 `).catch(() => {});
+
+                emit('node', {
+                    node: { ...a, label: 'Actor', _degree: 1 },
+                    edge: { source: a.id, target: evt.id, type: 'PARTICIPA', role: a.role }
+                });
             }
 
-            // Return the ego of the event
-            const nodesMap = new Map();
-            const eventNode = { ...evt, label: 'Evento', _degree: 0 };
-            nodesMap.set(evt.id, eventNode);
-            const edgesList = [];
+            // 3. Create actor_relations (PERTENECE_A, UBICADO_EN)
+            for (const rel of relations) {
+                await client.query(`
+                    SELECT * FROM cypher('lombardi', $$
+                        MATCH (a {id: '${esc(rel.source)}'}), (b {id: '${esc(rel.target)}'})
+                        MERGE (a)-[r:${rel.relation || 'PERTENECE_A'}]->(b)
+                        RETURN a, b
+                    $$) as (a agtype, b agtype)
+                `).catch(() => {});
 
-            for (const a of actors) {
-                nodesMap.set(a.id, { ...a, label: 'Actor', _degree: 1 });
-                edgesList.push({ source: a.id, target: evt.id, type: 'PARTICIPA', role: a.role });
+                emit('edge', { edge: { source: rel.source, target: rel.target, type: rel.relation } });
             }
 
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-                focal: eventNode,
-                nodes: [...nodesMap.values()],
-                edges: edgesList
-            }));
+            // 4. Contextual linking — guarantee link to the node the user searched from
+            if (contextNodeId) {
+                // Check if context node already appears among extracted actors
+                const actorIds = actors.map(a => a.id);
+                const alreadyLinked = actorIds.includes(contextNodeId);
+
+                if (!alreadyLinked) {
+                    // Check aliases: maybe extraction used a different id for the same entity
+                    const aliasesPath = require('path').join(__dirname, '../data/aliases.json');
+                    let aliasMatch = false;
+                    try {
+                        const aliasData = JSON.parse(require('fs').readFileSync(aliasesPath, 'utf-8'));
+                        // Get all aliases for contextNodeId
+                        const contextEntry = aliasData.entities[contextNodeId];
+                        if (contextEntry) {
+                            const contextNames = [contextEntry.canonical, ...(contextEntry.aliases || [])].map(s => s.toLowerCase());
+                            // Check if any extracted actor name matches any alias
+                            for (const a of actors) {
+                                const names = [a.name, a.id.replace(/-/g, ' ')].map(s => s.toLowerCase());
+                                if (names.some(n => contextNames.includes(n)) || contextNames.some(n => names.includes(n))) {
+                                    aliasMatch = true;
+                                    // Merge: create edge from contextNodeId to event
+                                    await client.query(`
+                                        SELECT * FROM cypher('lombardi', $$
+                                            MATCH (a {id: '${esc(contextNodeId)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                                            MERGE (a)-[r:PARTICIPA]->(e)
+                                            SET r.role = '${esc(a.role || 'vinculado')}'
+                                            RETURN a, e
+                                        $$) as (a agtype, e agtype)
+                                    `).catch(() => {});
+                                    emit('edge', { edge: { source: contextNodeId, target: evt.id, type: 'PARTICIPA', role: a.role || 'vinculado' } });
+                                    break;
+                                }
+                            }
+                        }
+                    } catch {}
+
+                    // If no alias match, still create the link — the user explicitly searched from this node
+                    if (!aliasMatch) {
+                        // Verify the context node exists in the graph
+                        const exists = await client.query(`
+                            SELECT * FROM cypher('lombardi', $$
+                                MATCH (n {id: '${esc(contextNodeId)}'}) RETURN n
+                            $$) as (n agtype)
+                        `).catch(() => ({ rows: [] }));
+
+                        if (exists.rows.length > 0) {
+                            await client.query(`
+                                SELECT * FROM cypher('lombardi', $$
+                                    MATCH (a {id: '${esc(contextNodeId)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                                    MERGE (a)-[r:PARTICIPA]->(e)
+                                    SET r.role = 'vinculado por búsqueda'
+                                    RETURN a, e
+                                $$) as (a agtype, e agtype)
+                            `).catch(() => {});
+                            emit('edge', { edge: { source: contextNodeId, target: evt.id, type: 'PARTICIPA', role: 'vinculado por búsqueda' } });
+                            emit('status', { message: `Vinculado a ${contextNodeId}` });
+                        }
+                    }
+                }
+            }
+
+            // 5. Save to news_raw SQL
+            await client.query(`
+                INSERT INTO public.news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+                ON CONFLICT (link) DO UPDATE SET processed = true
+            `, [newsItem.source_name, newsItem.source_lang || '', newsItem.source_region || '',
+                newsItem.title, newsItem.link, newsItem.description, newsItem.pubDate || newsItem.pub_date || null
+            ]).catch(() => {});
+
+            emit('done', { actorCount: actors.length, eventId: evt.id });
         } finally {
             client.release();
         }
+        res.end();
         return;
     }
 

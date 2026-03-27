@@ -8,8 +8,8 @@ const RESOLVER_MODEL = schema.extraction.models.resolver.model;
 const OLLAMA_URL = 'http://localhost:11434/api/generate';
 
 const pool = new Pool({
-    host: 'localhost', port: 5432, database: 'overstanding',
-    user: 'os_admin', password: 'overstanding_pass'
+    host: 'localhost', port: 5432, database: 'lombardi',
+    user: 'os_admin', password: 'lombardi_pass'
 });
 
 function esc(str) {
@@ -21,7 +21,7 @@ function parseAgtype(raw) {
     return JSON.parse(String(raw).replace(/::(vertex|edge|path)$/g, ''));
 }
 
-const RESOLVER_PROMPT = `You are a contradiction detector for OverStand. Compare two claims about the same event from different news sources.
+const RESOLVER_PROMPT = `You are a contradiction detector for Lombardi. Compare two claims about the same event from different news sources.
 
 RULES:
 1. Determine if the two claims CONTRADICT each other, COMPLEMENT each other, or are UNRELATED.
@@ -76,7 +76,7 @@ Evidence: ${claimB.evidence_quote || 'N/A'}`;
 async function findCandidatePairs(client) {
     // Buscar afirmaciones que comparten el mismo evento pero vienen de distintas fuentes
     const result = await client.query(`
-        SELECT * FROM cypher('overstanding', $$
+        SELECT * FROM cypher('lombardi', $$
             MATCH (n1:Noticia)-[:REPORTA]->(c1:Afirmacion)-[:SOSTIENE]->(e:Evento)<-[:SOSTIENE]-(c2:Afirmacion)<-[:REPORTA]-(n2:Noticia)
             WHERE n1.source <> n2.source AND id(c1) < id(c2)
             RETURN c1, c2, n1.source, n2.source, e.name LIMIT 50
@@ -95,7 +95,7 @@ async function findCandidatePairs(client) {
 async function findCandidatesByActor(client) {
     // Afirmaciones que comparten actor pero de distintas fuentes
     const result = await client.query(`
-        SELECT * FROM cypher('overstanding', $$
+        SELECT * FROM cypher('lombardi', $$
             MATCH (n1:Noticia)-[:REPORTA]->(c1:Afirmacion)-[:INVOLUCRA]->(a:Actor)<-[:INVOLUCRA]-(c2:Afirmacion)<-[:REPORTA]-(n2:Noticia)
             WHERE n1.source <> n2.source AND id(c1) < id(c2)
             RETURN c1, c2, n1.source, n2.source, a.name LIMIT 50
@@ -105,12 +105,12 @@ async function findCandidatesByActor(client) {
     // Filter out already-resolved pairs in JS
     const alreadyResolved = new Set();
     const resolved = await client.query(`
-        SELECT * FROM cypher('overstanding', $$
+        SELECT * FROM cypher('lombardi', $$
             MATCH (c1)-[:CONTRADICE]->(c2) RETURN c1.id, c2.id
         $$) as (a agtype, b agtype)
     `).catch(() => ({ rows: [] }));
     const complemented = await client.query(`
-        SELECT * FROM cypher('overstanding', $$
+        SELECT * FROM cypher('lombardi', $$
             MATCH (c1)-[:COMPLEMENTA]->(c2) RETURN c1.id, c2.id
         $$) as (a agtype, b agtype)
     `).catch(() => ({ rows: [] }));
@@ -136,7 +136,7 @@ async function writeRelation(client, claimAId, claimBId, resolution) {
 
     if (relType === 'CONTRADICE') {
         await client.query(`
-            SELECT * FROM cypher('overstanding', $$
+            SELECT * FROM cypher('lombardi', $$
                 MATCH (c1:Afirmacion {id: '${esc(claimAId)}'}), (c2:Afirmacion {id: '${esc(claimBId)}'})
                 MERGE (c1)-[r:CONTRADICE]->(c2)
                 SET r.tension_score = ${parseFloat(resolution.tension_score) || 0},
@@ -148,7 +148,7 @@ async function writeRelation(client, claimAId, claimBId, resolution) {
         `);
     } else if (relType === 'COMPLEMENTA') {
         await client.query(`
-            SELECT * FROM cypher('overstanding', $$
+            SELECT * FROM cypher('lombardi', $$
                 MATCH (c1:Afirmacion {id: '${esc(claimAId)}'}), (c2:Afirmacion {id: '${esc(claimBId)}'})
                 MERGE (c1)-[r:COMPLEMENTA]->(c2)
                 SET r.detected_by = '${esc(RESOLVER_MODEL)}',
@@ -160,7 +160,7 @@ async function writeRelation(client, claimAId, claimBId, resolution) {
 }
 
 async function main() {
-    console.log(`=== OverStand Resolver (${RESOLVER_MODEL}) ===\n`);
+    console.log(`=== Lombardi Resolver (${RESOLVER_MODEL}) ===\n`);
 
     const client = await pool.connect();
     try {

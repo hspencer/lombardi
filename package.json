@@ -1,7 +1,7 @@
 {
-  "name": "overstand",
-  "version": "0.1.0",
-  "description": "Triangulacion ontologica de fuentes de noticias globales",
+  "name": "lombardi",
+  "version": "0.2.0",
+  "description": "Triangulacion ontológica de fuentes de noticias globales",
   "scripts": {
     "fetch": "node backend/rss_fetcher.js",
     "ingest": "node backend/ingest.js",
@@ -14,6 +14,7 @@
   "license": "ISC",
   "dependencies": {
     "csv-parser": "^3.2.0",
+    "dotenv": "^17.3.1",
     "fast-xml-parser": "^5.5.9",
     "pg": "^8.20.0"
   }

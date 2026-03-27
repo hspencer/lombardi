@@ -1,6 +1,6 @@
-# OverStand — Local Deploy
+# Lombardi — Local Deploy
 
-Guia para levantar OverStand en una Mac con Apple Silicon (M1/M2/M3).
+Guia para levantar Lombardi en una Mac con Apple Silicon (M1/M2/M3).
 
 ## Requisitos
 
@@ -16,8 +16,8 @@ Guia para levantar OverStand en una Mac con Apple Silicon (M1/M2/M3).
 ## 1. Clonar el repositorio
 
 ```bash
-git clone <repo-url> overstand
-cd overstand
+git clone <repo-url> lombardi
+cd lombardi
 ```
 
 ## 2. Instalar dependencias de Node
@@ -38,13 +38,13 @@ Esto inicia un contenedor `os_database` con PostgreSQL + la extension AGE para g
 
 - **Puerto:** 5432
 - **Usuario:** os_admin
-- **Password:** overstanding_pass
-- **Base de datos:** overstanding
+- **Password:** lombardi_pass
+- **Base de datos:** lombardi
 
 Verificar que esta corriendo:
 
 ```bash
-docker exec os_database pg_isready -U os_admin -d overstanding
+docker exec os_database pg_isready -U os_admin -d lombardi
 ```
 
 ## 4. Instalar modelo de Ollama
@@ -128,16 +128,16 @@ ls data/raw_news/*.json | wc -l          # pendientes
 ls data/raw_news/.processed/*.json | wc -l  # procesadas
 
 # Consultar el grafo directamente
-docker exec os_database psql -U os_admin -d overstanding -c "
+docker exec os_database psql -U os_admin -d lombardi -c "
 LOAD 'age'; SET search_path = ag_catalog, public;
-SELECT count(*) FROM cypher('overstanding', \$\$ MATCH (n) RETURN n \$\$) as (v agtype);
+SELECT count(*) FROM cypher('lombardi', \$\$ MATCH (n) RETURN n \$\$) as (v agtype);
 "
 
 # Limpiar grafo y reprocesar desde cero
-docker exec os_database psql -U os_admin -d overstanding -c "
+docker exec os_database psql -U os_admin -d lombardi -c "
 LOAD 'age'; SET search_path = ag_catalog, public;
-SELECT drop_graph('overstanding', true);
-SELECT create_graph('overstanding');
+SELECT drop_graph('lombardi', true);
+SELECT create_graph('lombardi');
 TRUNCATE news_raw;
 "
 mv data/raw_news/.processed/*.json data/raw_news/

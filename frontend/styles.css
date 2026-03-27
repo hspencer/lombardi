@@ -4,8 +4,8 @@
     --surface-alt: #22262f;
     --ink: #e2e6ec;
     --muted: #7a8194;
-    --border: #2a2e3a;
-    --accent: #e8443a;
+    --border: #272c3b96;
+    --accent: #e24721;
     --accent-dim: #e8443a44;
     --green: #2a9d7e;
     --yellow: #d4a843;
@@ -158,8 +158,8 @@ body {
 }
 
 .detail-content h2 {
-    font-size: 16px;
-    font-weight: 600;
+    font-size: 2em;
+    font-weight: 300;
     margin-bottom: 12px;
     padding-right: 24px;
 }

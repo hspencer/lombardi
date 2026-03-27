@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "OverStand Ontology",
+  "title": "Lombardi Ontology",
   "version": "2.0.0",
   "description": "Ontología v2: Actor + Evento como nodos. Relaciones como aristas con metadatos. Noticias solo en SQL.",
 
   "graph": {
-    "name": "overstanding",
+    "name": "lombardi",
     "nodes": {
       "Actor": {
         "description": "Entidad que participa en eventos: persona, organización, lugar u objeto.",
@@ -118,8 +118,8 @@
 
   "extraction": {
     "models": {
-      "extractor":  { "model": "llama3.1",  "role": "Extracción ontológica desde noticias." },
-      "resolver":   { "model": "qwen3.5",   "role": "Detección de contradicciones entre eventos." },
+      "extractor":  { "model": "llama3.1:latest",  "role": "Extracción ontológica desde noticias." },
+      "resolver":   { "model": "llama3.1:latest",   "role": "Detección de contradicciones entre eventos." },
       "auditor":    { "model": "claude",     "role": "Análisis complejo. Uso puntual vía API." }
     },
     "output_language": "es",

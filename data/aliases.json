@@ -1,5 +1,5 @@
 {
-  "$schema": "Diccionario de normalización de entidades para OverStand",
+  "$schema": "Diccionario de normalización de entidades para Lombardi",
   "version": "1.0.0",
   "description": "Mapea variantes de nombres a un ID canónico. Se consulta en cada ingesta para evitar nodos duplicados en el grafo. Editable manualmente o por el sistema.",
   "updated_at": "2026-03-27",
@@ -310,11 +310,6 @@
       "type": "Organization",
       "aliases": []
     },
-    "pentagonoo": {
-      "canonical": "Pentágono",
-      "type": "Organization",
-      "aliases": []
-    },
     "kremlin": {
       "canonical": "Kremlin",
       "type": "Organization",
@@ -389,6 +384,31 @@
         "Washington",
         "estados-unidos"
       ]
+    },
+    "pentagono": {
+      "canonical": "Pentágono",
+      "type": "Location",
+      "aliases": [
+        "pentagon",
+        "pentagonoo"
+      ]
+    },
+    "hegseth": {
+      "canonical": "Lloyd Austin (no aparece en el texto, pero es el Secretario de Defensa de EE.UU.)",
+      "type": "Person",
+      "aliases": [
+        "Lloyd Austin"
+      ]
+    },
+    "estados-unidos": {
+      "canonical": "Estados Unidos",
+      "type": "Location",
+      "aliases": []
+    },
+    "pentagonoo": {
+      "canonical": "Pentágono",
+      "type": "Organization",
+      "aliases": []
     }
   }
 }

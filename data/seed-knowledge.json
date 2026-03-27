@@ -1,5 +1,5 @@
 {
-  "$schema": "Grafo de conocimiento general para OverStand",
+  "$schema": "Grafo de conocimiento general para Lombardi",
   "version": "1.0.0",
   "description": "Relaciones de sentido común entre actores geopolíticos. Se carga una vez para dar contexto base al grafo.",
   "updated_at": "2026-03-27",

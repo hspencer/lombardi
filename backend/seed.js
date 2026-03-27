@@ -5,8 +5,8 @@ const { Pool } = require('pg');
 const SEED_PATH = path.join(__dirname, '../data/seed-knowledge.json');
 
 const pool = new Pool({
-    host: 'localhost', port: 5432, database: 'overstanding',
-    user: 'os_admin', password: 'overstanding_pass'
+    host: 'localhost', port: 5432, database: 'lombardi',
+    user: 'os_admin', password: 'lombardi_pass'
 });
 
 function esc(str) {
@@ -26,7 +26,7 @@ async function run() {
         for (const e of seed.entities) {
             try {
                 await client.query(`
-                    SELECT * FROM cypher('overstanding', $$
+                    SELECT * FROM cypher('lombardi', $$
                         MERGE (a:Actor {id: '${esc(e.id)}'})
                         SET a.name = '${esc(e.name)}', a.type = '${esc(e.type)}', a.description = '${esc(e.desc)}'
                         RETURN a
@@ -48,7 +48,7 @@ async function run() {
                 PERTENECE_A: `MATCH (a:Actor {id: '${esc(r.source)}'}), (b:Actor {id: '${esc(r.target)}'}) MERGE (a)-[:PERTENECE_A]->(b) RETURN a, b`
             };
             try {
-                await client.query(`SELECT * FROM cypher('overstanding', $$ ${queries[rel]} $$) as (a agtype, b agtype)`);
+                await client.query(`SELECT * FROM cypher('lombardi', $$ ${queries[rel]} $$) as (a agtype, b agtype)`);
             } catch (err) {
                 console.error(`  Error ${r.source}->${r.target}: ${err.message.slice(0, 60)}`);
             }

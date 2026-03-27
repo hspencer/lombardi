@@ -10,7 +10,7 @@ while true; do
         break
     fi
     echo "$(date): Iniciando ingesta ($PENDING pendientes)..." >> $LOG
-    timeout 300 node backend/ingest.js >> $LOG 2>&1
+    timeout 600 node backend/ingest.js >> $LOG 2>&1
     EXIT=$?
     echo "$(date): Proceso terminó con código $EXIT. Reiniciando en 5s..." >> $LOG
     sleep 5

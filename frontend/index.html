@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OverStand</title>
+    <title>Lombardi</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400..900;1,400..900&family=Alegreya+Sans:ital,wght@0,400..900;1,400..900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/variables.css">
     <link rel="stylesheet" href="css/layout.css">
     <link rel="stylesheet" href="css/graph.css">
@@ -11,7 +15,7 @@
 </head>
 <body>
     <header class="shell-header">
-        <h1>Over<strong>Stand</strong></h1>
+        <h1>Lom<strong>bardi</strong></h1>
         <div class="search-container">
             <input type="text" id="searchInput" placeholder="Buscar actor, evento..." autocomplete="off">
             <ul id="searchResults" class="search-results" hidden></ul>
@@ -20,7 +24,7 @@
             <button id="statsBar" class="stats-bar" onclick="toggleProcessPanel()"></button>
             <div id="processPanel" class="process-panel" hidden>
                 <div class="process-header">
-                    <h4 id="processPanelTitle">Processing</h4>
+                    <h4 id="processPanelTitle"></h4>
                     <button onclick="toggleProcessPanel()" class="detail-close">&times;</button>
                 </div>
                 <div class="process-bar-container">
@@ -29,23 +33,29 @@
                 <div id="processDetails" class="process-details"></div>
                 <div class="process-actions">
                     <button id="fetchRssBtn" class="ingest-btn" onclick="fetchNewRSS()">
-                        <i data-feather="rss"></i> <span>Fetch RSS</span>
+                        <i data-feather="rss"></i> <span id="fetchRssLabel"></span>
                     </button>
                     <button class="ingest-btn" onclick="toggleConsole()">
-                        <i data-feather="terminal"></i> <span>Console</span>
+                        <i data-feather="terminal"></i> <span id="consoleBtnLabel"></span>
                     </button>
                 </div>
             </div>
         </div>
-        <button class="console-toggle" onclick="toggleConsole()" title="Console"><i data-feather="terminal"></i></button>
+        <button class="console-toggle" id="consoleToggleBtn" onclick="toggleConsole()"><i data-feather="terminal"></i></button>
+        <button id="themeToggle" class="theme-toggle" onclick="toggleTheme()"><i data-feather="sun"></i></button>
         <button id="langToggle" class="lang-toggle" onclick="toggleLang()">ES</button>
     </header>
 
     <main class="split-view">
         <div class="split-left" id="graphPanel">
             <div class="graph-toolbar">
-                <button id="viewNodes" class="view-toggle active" onclick="setView('nodes')">Nodes</button>
-                <button id="viewTitles" class="view-toggle" onclick="setView('titles')">Titles</button>
+                <button id="viewNodes" class="view-toggle" onclick="setView('nodes')"></button>
+                <button id="viewTitles" class="view-toggle active" onclick="setView('titles')"></button>
+                <div class="degree-control">
+                    <label id="degreeLabel"></label>
+                    <input type="range" id="degreeSlider" min="1" max="3" value="1" oninput="setDegree(+this.value)">
+                    <span id="degreeValue">2</span>
+                </div>
             </div>
             <svg id="graph"></svg>
             <nav id="breadcrumbs" class="breadcrumbs"></nav>
@@ -53,12 +63,12 @@
         <div class="split-handle" id="splitHandle"></div>
         <div class="split-right" id="detailPanel">
             <div class="right-tabs">
-                <button id="tabFeed" class="right-tab active" onclick="switchRightTab('feed')">Noticias</button>
-                <button id="tabNode" class="right-tab" onclick="switchRightTab('node')">Nodo</button>
+                <button id="tabFeed" class="right-tab active" onclick="switchRightTab('feed')"></button>
+                <button id="tabNode" class="right-tab" onclick="switchRightTab('node')"></button>
             </div>
             <div id="rightNodePanel" class="right-panel-content" hidden>
                 <div class="detail-empty">
-                    <p>Selecciona un nodo en el grafo para ver su detalle.</p>
+                    <p id="detailEmptyMsg"></p>
                 </div>
                 <div class="detail-content" id="detailContent" hidden>
                     <button class="detail-close" id="detailClose">&times;</button>
@@ -66,8 +76,14 @@
                 </div>
             </div>
             <div id="rightFeedPanel" class="right-panel-content">
+                <div class="feed-controls">
+                    <select id="feedSort" onchange="changeFeedSort(this.value)">
+                        <option id="feedSortDate" value="date"></option>
+                        <option id="feedSortRelevance" value="relevance"></option>
+                    </select>
+                </div>
                 <div id="newsFeed" class="news-feed"></div>
-                <button id="loadMoreBtn" class="load-more-btn" onclick="loadMoreFeed()" hidden>Cargar m&aacute;s</button>
+                <button id="loadMoreBtn" class="load-more-btn" onclick="loadMoreFeed()" hidden></button>
             </div>
         </div>
     </main>
@@ -75,7 +91,7 @@
     <!-- Console drawer -->
     <div id="consoleDrawer" class="console-drawer" hidden>
         <div class="console-header">
-            <h4>Console</h4>
+            <h4 id="consoleTitle"></h4>
             <button onclick="toggleConsole()" class="detail-close">&times;</button>
         </div>
         <div id="consoleOutput" class="console-output"></div>

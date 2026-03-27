@@ -1,49 +1,43 @@
-# OverStand (OS)
+# Lombardi
 
-> *A diferencia de Understand (entender desde abajo) o Outstand (sobresalir), **OverStand** es una posicion cognitiva de dominio: estar encima de la informacion para ver la totalidad de la trama sin ser absorbido por el ruido.*
+> Es un visualizador de noticias, homenaje a [Mark Lombardi](https://en.wikipedia.org/wiki/Mark_Lombardi) (1951–2000), artista que dedicó su vida a dibujar a mano las redes ocultas del poder: bancos, políticos, traficantes de armas y sus conexiones invisibles. Sus dibujos son grafos de conspiración — mapas de relaciones que el periodismo convencional no podía (o no quería) articular.
 
-## El Concepto
+![Carlos Cardoen, Industrias Cardoen, Chile, 1982–94 (séptima versión)](https://www.moma.org/media/W1siZiIsIjE3MDc1NyJdLFsicCIsImNvbnZlcnQiLCItcXVhbGl0eSA5MCAtcmVzaXplIDIwMDB4MjAwMFx1MDAzZSJdXQ.jpg?sha=3d7d1252c3fa0bcb)
 
-En la cultura Rastafari se rechaza "Understand" porque implica sumision: estar *debajo* para conocer. **OverStand** propone elevacion: alcanzar una comprension donde el sujeto no es dominado por la informacion, sino que la domina desde una perspectiva soberana.
+*Mark Lombardi — Carlos Cardoen, Industrias Cardoen, Chile, 1982–94 (séptima versión), 1999. Grafito sobre papel. MoMA, Nueva York.*
 
-**Geometria del conocimiento:**
-- **Understand** (debajo): ver los cimientos, arriesgarse a ser aplastado por la estructura
-- **Outstand** (fuera): sobresalir, pero quedar aislado de la trama
-- **OverStand** (encima): estar en el vertice, ver la totalidad de la red, los flujos y las tensiones
+**Lombardi** automatiza lo que Mark hacía a mano: trazar las líneas entre actores, eventos y contradicciones a partir del flujo noticioso mundial, usando inteligencia artificial local para que la soberanía sobre los datos permanezca en manos del investigador.
 
-El sistema opera bajo la premisa de que la realidad es un fluido. OverStand es la capacidad de estar en la superficie (la interfaz) viendo simultaneamente lo que ocurre en las profundidades (los datos raw) y como se propagan las ondas (las consecuencias).
+## Qué hace
 
-## Que hace
-
-- Ingiere noticias de 31 feeds RSS internacionales (BBC, TASS, Al Jazeera, China Daily, Breitbart, Le Monde...)
-- Extrae entidades, afirmaciones y relaciones usando LLMs locales (Ollama)
+- Ingiere noticias de 31+ feeds RSS internacionales (BBC, TASS, Al Jazeera, China Daily, Breitbart, Le Monde...)
+- Extrae entidades, eventos y relaciones usando LLMs locales (Ollama)
 - Construye un grafo de conocimiento en Apache AGE (PostgreSQL + Cypher)
-- Visualiza un **egosistema de nodo** navegable: foco din&aacute;mico con 2 grados de separaci&oacute;n
-- Enriquece nodos desde Wikidata con un click
+- Visualiza un **egosistema de nodo** navegable: foco dinámico con grados de separación
+- Enriquece nodos desde Wikidata
 - Permite editar tipos, aliases y fusionar nodos desde la interfaz
+- Procesa noticias on-demand con Claude API (streaming)
 
 ## Stack
 
-| Capa | Tecnolog&iacute;a | Rol |
+| Capa | Tecnología | Rol |
 |:---|:---|:---|
-| Base de datos | Apache AGE (Docker) | Grafo + SQL h&iacute;brido |
-| IA local | Ollama (nativo) | Extracci&oacute;n ontol&oacute;gica con llama3.1 |
+| Base de datos | Apache AGE (Docker) | Grafo + SQL híbrido |
+| IA local | Ollama (nativo M3) | Extracción ontológica batch |
+| IA on-demand | Claude API | Procesamiento rápido interactivo |
 | Backend | Node.js vanilla | API REST + daemon de ingesta |
-| Frontend | Vanilla JS + D3.js | Grafo egoc&eacute;ntrico, sin frameworks |
+| Frontend | Vanilla JS + D3.js | Grafo egocéntrico, sin frameworks |
 
 ## Quick Start
 
 ```bash
-# Ver instrucciones completas de instalaci&oacute;n
-cat docs/local-deploy.md
+cat docs/local-deploy.md        # Instrucciones completas
 
-# Resumen r&aacute;pido:
-docker compose up -d          # Levanta Apache AGE
-npm install                    # Dependencias
-node backend/seed.js           # Carga grafo de conocimiento base
-node backend/rss_fetcher.js    # Descarga noticias
-node backend/ingest.js         # Procesa con Ollama
-node backend/api.js            # Abre http://localhost:3000
+# Resumen rápido:
+docker compose up -d             # Levanta Apache AGE
+npm install                      # Dependencias
+./start.sh                       # O manualmente:
+node backend/api.js              # http://localhost:3000
 ```
 
 ## Arquitectura
@@ -53,7 +47,7 @@ node backend/api.js            # Abre http://localhost:3000
                                         |
                                    ingest.js + Ollama
                                         |
-                                  .extraction.json (persistente)
+                                  .extraction.json (cache)
                                         |
                                    Apache AGE (grafo)
                                         |
@@ -62,60 +56,58 @@ node backend/api.js            # Abre http://localhost:3000
                                    frontend (D3.js)
 ```
 
-## Estructura del proyecto
+## Estructura
 
 ```
-/OverStand
+/lombardi
 ├── backend/
 │   ├── api.js              # Servidor HTTP + API REST
-│   ├── ingest.js           # Daemon: Ollama extraccion -> grafo
-│   ├── ingest-runner.sh    # Wrapper resiliente para ingesta continua
+│   ├── ingest.js           # Daemon: Ollama → grafo
 │   ├── rss_fetcher.js      # Descarga RSS a JSON
-│   └── seed.js             # Carga grafo de conocimiento base
+│   ├── extractor.js        # Prompt de extracción ontológica
+│   ├── resolver.js         # Detector de contradicciones
+│   └── seed.js             # Grafo de conocimiento base
 ├── frontend/
 │   ├── index.html          # UI principal
-│   ├── app.js              # Motor D3.js egoc&eacute;ntrico
-│   ├── i18n.js             # Traducciones ES/EN
-│   └── css/
-│       ├── variables.css   # Tokens sem&aacute;nticos
-│       ├── layout.css      # Shell, header, split-view
-│       ├── graph.css       # Animaciones del grafo
-│       └── detail.css      # Panel de detalle
+│   ├── app.js              # Motor D3.js egocéntrico
+│   ├── i18n.js             # ES/EN
+│   └── css/                # variables, layout, graph, detail
 ├── data/
-│   ├── schema.json         # Ontolog&iacute;a (fuente de verdad)
-│   ├── aliases.json        # Normalizaci&oacute;n de entidades
-│   ├── seed-knowledge.json # Grafo base de sentido com&uacute;n
-│   ├── sources/feeds.csv   # 31 feeds RSS curados
+│   ├── schema.json         # Ontología (fuente de verdad)
+│   ├── aliases.json        # Normalización de entidades
+│   ├── seed-knowledge.json # Grafo base
+│   ├── sources/feeds.csv   # 31+ feeds RSS curados
 │   └── raw_news/           # Noticias crudas + extracciones
 ├── docs/
-│   └── local-deploy.md     # Gu&iacute;a de instalaci&oacute;n local
+│   └── local-deploy.md
 ├── docker-compose.yml
 ├── backlog.md
 └── package.json
 ```
 
-## Ontolog&iacute;a
+## Ontología
 
-Definida en `data/schema.json`:
+Definida en [`data/schema.json`](data/schema.json):
 
-**Nodos:** Actor, Evento, Afirmaci&oacute;n, Noticia
-**Aristas:** REPORTA, INVOLUCRA, SOSTIENE, PARTICIPA, UBICADO_EN, PERTENECE_A, CAUSA, CONTRADICE, COMPLEMENTA, DESMIENTE, ACTUALIZA
+**Nodos:** Actor (Person, Organization, Location, Object), Evento
+**Aristas:** PARTICIPA, CAUSA, CONTRADICE, COMPLEMENTA, DESMIENTE, ACTUALIZA, UBICADO_EN, PERTENECE_A
 **17 tipos de evento:** desde CAMBIO_LIDERAZGO hasta EVENTO_GENERICO
 
 ## Interfaz
 
-- **Vista Nodes:** Grafo de fuerza con colores por tipo (azul=persona, verde=lugar, naranja=organizaci&oacute;n)
-- **Vista Titles:** Tipograf&iacute;a como nodos con collision de bounding box
-- **Panel de detalle:** Tipo editable, aliases, merge, delete, noticias vinculadas, enriquecimiento Wikidata
-- **Breadcrumbs sem&aacute;nticos:** Muestra la arista entre nodos navegados
-- **Buscador:** Autocompletado con dot de color por tipo
+- **Vista Nodes:** Grafo de fuerza con colores por tipo
+- **Vista Titles:** Tipografía serif como nodos, collision de bounding box
+- **Panel de detalle:** Tipo editable, descripción, aliases, merge, noticias vinculadas, Wikidata
+- **Breadcrumbs semánticos:** Aristas entre nodos navegados
+- **Buscador:** Autocompletado con dot de color
 - **i18n:** ES/EN con browser detect
+- **Tema claro/oscuro**
 
-## Documentaci&oacute;n
+## Documentación
 
-- [`docs/local-deploy.md`](docs/local-deploy.md) — Instalaci&oacute;n y configuraci&oacute;n local
-- [`backlog.md`](backlog.md) — Roadmap y estado del proyecto
-- [`data/schema.json`](data/schema.json) — Ontolog&iacute;a auditable
+- [`docs/local-deploy.md`](docs/local-deploy.md) — Instalación local
+- [`backlog.md`](backlog.md) — Roadmap
+- [`data/schema.json`](data/schema.json) — Ontología auditable
 
 ## Licencia
 

@@ -1,34 +1,42 @@
 const API = '';
 let schemaData = null;
 let simulation = null;
+let currentSimulation = null; // alias for applyDegreeFilter
 let svg, g, linkGroup, nodeGroup;
 let focalId = null;
 let history = []; // breadcrumbs
-let currentView = 'nodes'; // 'nodes' | 'titles'
+let currentView = 'titles'; // 'nodes' | 'titles'
+let currentDegree = 1;
 let lastEgoData = null; // cache for view switching
 
 // --- Node visual config ---
 
 // Colors by entity TYPE (not graph label)
 const TYPE_COLORS = {
-    Person:       { fill: '#5DADE2', stroke: '#AED6F1' },
-    Location:     { fill: '#2ECC71', stroke: '#82E0AA' },
-    Organization: { fill: '#E67E22', stroke: '#F5CBA7' },
-    Object:       { fill: '#95A5A6', stroke: '#BDC3C7' },
-    Event:        { fill: '#E74C3C', stroke: '#F1948A' }
+    Person:       { fill: '#8B5E3C', stroke: '#D4A574' },
+    Location:     { fill: '#6B8E5A', stroke: '#A3B88C' },
+    Organization: { fill: '#C45D3E', stroke: '#E8A088' },
+    Object:       { fill: '#A08B76', stroke: '#C4B5A4' },
+    Event:        { fill: '#B8860B', stroke: '#D4A017' }
 };
 
 // Fallback by graph label
 const LABEL_COLORS = {
-    Afirmacion: { fill: '#A569BD', stroke: 'none' },
-    Noticia:    { fill: '#5D6D7E', stroke: 'none' }
+    Afirmacion: { fill: '#8B7D6B', stroke: 'none' },
+    Noticia:    { fill: '#6B5744', stroke: 'none' }
 };
 
 const BASE_RADIUS = { Actor: 8, Evento: 8, Afirmacion: 4, Noticia: 3 };
 const MAX_LABEL_LEN = 20;
 
+// Trim trailing " - Source Name" from news titles
+function trimTitle(title) {
+    if (!title) return '—';
+    return title.replace(/\s*[-–—]\s*[^-–—]{2,30}$/, '').trim() || title;
+}
+
 function typeColor(d) {
-    if (d.is_disputed && d.label === 'Afirmacion') return { fill: '#E74C3C', stroke: '#F1948A' };
+    if (d.is_disputed && d.label === 'Afirmacion') return { fill: '#C45D3E', stroke: '#E8A088' };
     return TYPE_COLORS[d.type] || LABEL_COLORS[d.label] || TYPE_COLORS.Object;
 }
 
@@ -43,6 +51,8 @@ function nodeRadius(d) {
 
 function nodeColor(d) { return typeColor(d).fill; }
 function nodeStroke(d) { return typeColor(d).stroke || 'none'; }
+function themeVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function graphLabelColor(d) { return d.id === focalId ? themeVar('--graph-label-focal') : themeVar('--graph-label'); }
 
 function nodeStrokeWidth(d) {
     if (d.id === focalId) return 3;
@@ -58,7 +68,7 @@ function truncLabel(name) {
 // For search results and breadcrumbs
 function nodeDot(label, type) {
     const c = TYPE_COLORS[type] || LABEL_COLORS[label] || TYPE_COLORS.Object;
-    return `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.fill};border:1.5px solid ${c.stroke === 'none' ? c.fill : c.stroke};vertical-align:middle;margin-right:6px"></span>`;
+    return `<span class="node-dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c.fill};border:1.5px solid ${c.stroke === 'none' ? c.fill : c.stroke}"></span>`;
 }
 
 // Radial grouping angles by type
@@ -80,7 +90,8 @@ function edgeVisual(type) {
 // --- Init ---
 
 async function init() {
-    // Init i18n
+    // Init theme + i18n
+    initTheme();
     setLang(detectLang());
     applyStaticI18n();
 
@@ -96,22 +107,112 @@ async function init() {
 
 function applyStaticI18n() {
     document.getElementById('searchInput').placeholder = t('search.placeholder');
-    document.querySelector('.detail-empty p').textContent = t('detail.empty');
+    document.getElementById('detailEmptyMsg').textContent = t('detail.empty');
     document.getElementById('langToggle').textContent = currentLang.toUpperCase();
+    // Toolbar
+    document.getElementById('viewNodes').textContent = t('toolbar.nodes');
+    document.getElementById('viewTitles').textContent = t('toolbar.titles');
+    document.getElementById('degreeLabel').textContent = t('toolbar.degree');
+    // Tabs
+    document.getElementById('tabFeed').textContent = t('tab.feed');
+    document.getElementById('tabNode').textContent = t('tab.node');
+    // Feed
+    document.getElementById('feedSortDate').textContent = t('feed.sort.date');
+    document.getElementById('feedSortRelevance').textContent = t('feed.sort.relevance');
+    document.getElementById('loadMoreBtn').textContent = t('feed.loadMore');
+    // Process panel
+    document.getElementById('processPanelTitle').textContent = t('process.title');
+    document.getElementById('fetchRssLabel').textContent = t('process.fetch');
+    document.getElementById('consoleBtnLabel').textContent = t('process.console');
+    // Console & tooltips
+    document.getElementById('consoleTitle').textContent = t('console.title');
+    document.getElementById('consoleToggleBtn').title = t('console.title');
+    document.getElementById('themeToggle').title = t('theme.toggle');
 }
 
 function toggleLang() {
     setLang(currentLang === 'es' ? 'en' : 'es');
     applyStaticI18n();
-    // Re-render current focal if exists
     if (focalId) navigateTo(focalId);
+}
+
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'dark';
+    const next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('os-theme', next);
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.innerHTML = next === 'dark' ? '<i data-feather="sun"></i>' : '<i data-feather="moon"></i>';
+    if (typeof feather !== 'undefined') feather.replace();
+    if (focalId && lastEgoData) {
+        if (currentView === 'titles') renderTitles(lastEgoData);
+        else renderEgo(lastEgoData);
+    }
+}
+
+function initTheme() {
+    const saved = localStorage.getItem('os-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', saved);
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.innerHTML = saved === 'dark' ? '<i data-feather="sun"></i>' : '<i data-feather="moon"></i>';
 }
 
 // --- Ego Navigation ---
 
+function setDegree(deg) {
+    currentDegree = deg;
+    document.getElementById('degreeValue').textContent = deg;
+    if (lastEgoData) {
+        applyDegreeFilter(deg);
+    }
+}
+
+function applyDegreeFilter(deg) {
+    if (!lastEgoData || !currentSimulation) return;
+
+    const svg = d3.select('#graph');
+    const allNodes = lastEgoData.nodes;
+    const allEdges = lastEgoData.edges;
+
+    // Filter nodes by degree
+    const visibleNodes = allNodes.filter(n => (n._degree || 0) <= deg);
+    const visibleIds = new Set(visibleNodes.map(n => n.id));
+    const visibleEdges = allEdges.filter(e => visibleIds.has(e.source?.id || e.source) && visibleIds.has(e.target?.id || e.target));
+
+    // Update node visibility with transition
+    svg.selectAll('.ego-node')
+        .transition().duration(300)
+        .style('opacity', function(d) {
+            return visibleIds.has(d.id) ? (d._degree === 0 ? 1 : d._degree === 1 ? 1 : 0.4) : 0;
+        })
+        .style('pointer-events', function(d) {
+            return visibleIds.has(d.id) ? 'all' : 'none';
+        });
+
+    // Update edge visibility with transition
+    svg.selectAll('.ego-edge')
+        .transition().duration(300)
+        .style('opacity', function(d) {
+            const sid = d.source?.id || d.source;
+            const tid = d.target?.id || d.target;
+            return visibleIds.has(sid) && visibleIds.has(tid) ? 0.6 : 0;
+        });
+
+    // Update labels visibility
+    svg.selectAll('.ego-label')
+        .transition().duration(300)
+        .style('opacity', function(d) {
+            if (!visibleIds.has(d.id)) return 0;
+            if (d._degree <= 1) return 1;
+            return 0; // degree 2+ labels hidden (show on hover)
+        });
+}
+
 async function navigateTo(id, resetBreadcrumb) {
     const previousFocalId = focalId;
-    const url = id ? `${API}/api/ego?id=${encodeURIComponent(id)}` : `${API}/api/ego`;
+    // Always fetch max degree (3), filter on client
+    const base = id ? `${API}/api/ego?id=${encodeURIComponent(id)}` : `${API}/api/ego`;
+    const url = `${base}${base.includes('?') ? '&' : '?'}degree=3`;
     const res = await fetch(url);
     const data = await res.json();
 
@@ -217,7 +318,7 @@ function renderEgo(data) {
     const linkG = linkGroup.selectAll('g')
         .data(edges)
         .join('g')
-        .attr('class', 'edge-group');
+        .attr('class', 'edge-group ego-edge');
 
     // Curved path
     const link = linkG.append('path')
@@ -282,14 +383,13 @@ function renderEgo(data) {
     nodeGroup = g.append('g');
 
     // Separate degree 2 (hidden by default) from degree 0-1
-    const visibleNodes = nodes.filter(n => n._degree <= 1);
-    const hiddenNodes = nodes.filter(n => n._degree === 2);
-
     const node = nodeGroup.selectAll('g')
         .data(nodes)
         .join('g')
-        .attr('cursor', d => d._degree <= 1 ? 'pointer' : 'default')
-        .attr('visibility', d => d._degree <= 1 ? 'visible' : 'hidden')
+        .attr('class', d => `ego-node degree-${d._degree || 0}`)
+        .attr('cursor', d => d._degree <= currentDegree ? 'pointer' : 'default')
+        .style('opacity', d => d._degree <= currentDegree ? 1 : 0)
+        .style('pointer-events', d => d._degree <= currentDegree ? 'all' : 'none')
         .on('click', (e, d) => {
             e.stopPropagation();
             if (d.id === focalId) return;
@@ -318,19 +418,22 @@ function renderEgo(data) {
     node.append('circle')
         .attr('r', d => nodeRadius(d))
         .attr('fill', d => nodeColor(d))
-        .attr('stroke', d => d.id === focalId ? '#fff' : nodeStroke(d))
+        .attr('stroke', d => d.id === focalId ? themeVar('--graph-label-focal') : nodeStroke(d))
         .attr('stroke-width', d => nodeStrokeWidth(d))
-        .attr('opacity', d => d._degree === 2 ? 0.2 : 1.0);
+        .attr('opacity', d => d._degree > currentDegree ? 0.15 : 1.0);
 
-    // Labels: degree 0 and 1, Actor/Evento only, TRUNCATED
-    node.filter(d => d._degree <= 1 && (d.label === 'Actor' || d.label === 'Evento'))
-        .append('text')
-        .text(d => truncLabel(d.name || d.id))
-        .attr('font-size', d => d.id === focalId ? 13 : 9)
-        .attr('font-weight', d => d.id === focalId ? 700 : 400)
-        .attr('fill', d => d.id === focalId ? '#fff' : '#c0c8d4')
+    // --- Label layer (separate group, always on top) ---
+    const labelGroup = g.append('g');
+    const labelNodes = nodes.filter(n => n._degree <= 1 && (n.label === 'Actor' || n.label === 'Evento'));
+    labelGroup.selectAll('text')
+        .data(labelNodes, d => d.id)
+        .join('text')
+        .text(d => truncLabel(d.name || d.id).toUpperCase())
+        .attr('font-family', 'Alegreya Sans, system-ui, sans-serif')
+        .attr('font-size', d => d.id === focalId ? 12 : 9)
+        .attr('font-weight', d => d.id === focalId ? 700 : 500)
+        .attr('fill', d => graphLabelColor(d))
         .attr('text-anchor', 'middle')
-        .attr('dy', d => nodeRadius(d) + 13)
         .attr('pointer-events', 'none');
 
     // Tooltip for degree 2 (no permanent label)
@@ -344,7 +447,7 @@ function renderEgo(data) {
     node.on('mouseenter', function (e, d) {
         const name = d.name || d.predicate || d.title || d.id;
         const desc = d.description ? ` — ${d.description}` : '';
-        tooltip.textContent = `${name}${desc}`;
+        tooltip.innerHTML = desc ? `<strong>${name}</strong><br><span class="tooltip-desc">${desc}</span>` : `<strong>${name}</strong>`;
         tooltip.classList.add('visible');
 
         // Reveal degree-2 neighbors of this node
@@ -387,8 +490,9 @@ function renderEgo(data) {
     })
     .on('mouseleave', () => {
         tooltip.classList.remove('visible');
-        // Hide degree 2 again
-        node.attr('visibility', d => d._degree <= 1 ? 'visible' : 'hidden');
+        // Restore visibility based on current degree slider
+        node.style('opacity', d => d._degree <= currentDegree ? 1 : 0)
+            .style('pointer-events', d => d._degree <= currentDegree ? 'all' : 'none');
         linkG.each(function(d) {
             const src = typeof d.source === 'object' ? d.source.id : d.source;
             const tgt = typeof d.target === 'object' ? d.target.id : d.target;
@@ -397,7 +501,7 @@ function renderEgo(data) {
             d3.select(this).select('text').attr('opacity', 0);
         });
         node.select('circle:not(.node-disputed-halo)')
-            .attr('opacity', d => d._degree === 2 ? 0.2 : 1.0);
+            .attr('opacity', d => d._degree > currentDegree ? 0.15 : 1.0);
     });
 
     // --- Simulation ---
@@ -455,6 +559,9 @@ function renderEgo(data) {
                 .attr('x', d => (d.source.x + d.target.x) / 2)
                 .attr('y', d => (d.source.y + d.target.y) / 2);
             node.attr('transform', d => `translate(${d.x},${d.y})`);
+            labelGroup.selectAll('text')
+                .attr('x', d => d.x)
+                .attr('y', d => d.y + nodeRadius(d) + 13);
         });
 
     // Auto-zoom to fit degree 1
@@ -463,6 +570,7 @@ function renderEgo(data) {
     });
 
     // Also after 2 seconds for fast stabilization
+    currentSimulation = simulation;
     setTimeout(() => autoZoom(nodes, zoomBehavior, width, height), 2000);
 }
 
@@ -505,11 +613,11 @@ function setView(view) {
 
 // Typography rules by entity type
 const TITLE_STYLE = {
-    Person:       { transform: 'none',      fontWeight: 400, fontStyle: 'normal',  fontSize: 12 },
-    Location:     { transform: 'uppercase',  fontWeight: 700, fontStyle: 'normal',  fontSize: 12 },
-    Organization: { transform: 'uppercase',  fontWeight: 400, fontStyle: 'normal',  fontSize: 11 },
-    Object:       { transform: 'lowercase',  fontWeight: 400, fontStyle: 'italic',  fontSize: 10 },
-    Event:        { transform: 'uppercase',  fontWeight: 700, fontStyle: 'normal',  fontSize: 13 }
+    Person:       { transform: 'none',      fontWeight: 500, fontStyle: 'normal',  fontSize: 13, font: 'serif' },
+    Location:     { transform: 'uppercase',  fontWeight: 700, fontStyle: 'normal',  fontSize: 11, font: 'sans' },
+    Organization: { transform: 'uppercase',  fontWeight: 500, fontStyle: 'normal',  fontSize: 11, font: 'sans' },
+    Object:       { transform: 'lowercase',  fontWeight: 400, fontStyle: 'italic',  fontSize: 11, font: 'sans' },
+    Event:        { transform: 'none',       fontWeight: 300, fontStyle: 'italic',  fontSize: 14, font: 'sans', maxWidth: 320, anchor: 'start' }
 };
 
 function renderTitles(data) {
@@ -576,7 +684,8 @@ function renderTitles(data) {
             return (s === focalId || t === focalId) ? 0.5 : 0.12;
         });
 
-    // --- Text Nodes ---
+    // --- Layers: bg (diffuse backdrops) then text nodes ---
+    const bgGroup = g.append('g').attr('class', 'title-bg-layer');
     nodeGroup = g.append('g');
     const node = nodeGroup.selectAll('g')
         .data(nodes)
@@ -598,15 +707,30 @@ function renderTitles(data) {
         })
         .call(makeDrag());
 
-    // Text element as the "node"
+    // Max width for text wrapping (pixels)
+    const MAX_TEXT_WIDTH = 160;
+
+    // Helper: wrap text into lines
+    function wrapText(text, maxWidth, fontSize) {
+        const words = text.split(/\s+/);
+        const lines = [];
+        let currentLine = words[0] || '';
+        const charWidth = fontSize * 0.55; // approximate
+        for (let i = 1; i < words.length; i++) {
+            const test = currentLine + ' ' + words[i];
+            if (test.length * charWidth > maxWidth) {
+                lines.push(currentLine);
+                currentLine = words[i];
+            } else {
+                currentLine = test;
+            }
+        }
+        lines.push(currentLine);
+        return lines;
+    }
+
+    // Text element as the "node" with multi-line wrapping
     const textEl = node.append('text')
-        .text(d => {
-            const name = d.name || d.predicate || d.title || d.id;
-            const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
-            if (style.transform === 'uppercase') return name.toUpperCase();
-            if (style.transform === 'lowercase') return name.toLowerCase();
-            return name;
-        })
         .attr('font-size', d => {
             const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
             const base = style.fontSize;
@@ -618,25 +742,82 @@ function renderTitles(data) {
             return (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontWeight;
         })
         .attr('font-style', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontStyle)
+        .attr('font-family', d => {
+            const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
+            return style.font === 'serif' ? 'Alegreya, Georgia, serif' : 'Alegreya Sans, system-ui, sans-serif';
+        })
         .attr('fill', d => {
-            if (d.id === focalId) return '#fff';
+            if (d.id === focalId) return themeVar('--graph-label-focal');
             return nodeColor(d);
         })
-        .attr('text-anchor', 'middle')
+        .attr('text-anchor', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).anchor || 'middle')
         .attr('dominant-baseline', 'central')
         .attr('opacity', d => d._degree === 2 ? 0.15 : (d.id === focalId ? 1 : 0.85));
 
-    // Measure bounding boxes for collision
+    // Add multi-line tspan wrapping
+    textEl.each(function(d) {
+        const el = d3.select(this);
+        const name = d.name || d.predicate || d.title || d.id;
+        const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
+        let displayName = name;
+        if (style.transform === 'uppercase') displayName = name.toUpperCase();
+        else if (style.transform === 'lowercase') displayName = name.toLowerCase();
+
+        const fontSize = parseFloat(el.attr('font-size'));
+        const maxW = style.maxWidth || MAX_TEXT_WIDTH;
+        const lines = wrapText(displayName, maxW, fontSize);
+        const lineH = fontSize * 1.25;
+        const startY = -(lines.length - 1) * lineH / 2;
+
+        el.selectAll('tspan').remove();
+        lines.forEach((line, i) => {
+            el.append('tspan')
+                .attr('x', 0)
+                .attr('dy', i === 0 ? startY : lineH)
+                .text(line);
+        });
+    });
+
+    // Measure bounding boxes for collision + create diffuse backgrounds
     node.each(function(d) {
         const bbox = this.querySelector('text')?.getBBox();
+        const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
         if (bbox) {
             d._w = bbox.width + 12;
             d._h = bbox.height + 6;
+            d._bboxW = bbox.width;
+            d._bboxH = bbox.height;
+            // For left-aligned text, the collision center is offset to the right
+            d._bboxOffsetX = style.anchor === 'start' ? bbox.width / 2 : 0;
         } else {
             d._w = 60;
             d._h = 16;
+            d._bboxW = 48;
+            d._bboxH = 14;
+            d._bboxOffsetX = 0;
         }
     });
+
+    // SVG filter for diffuse blur
+    const titleDefs = svg.select('defs').empty() ? svg.append('defs') : svg.select('defs');
+    if (titleDefs.select('#title-blur').empty()) {
+        const filter = titleDefs.append('filter').attr('id', 'title-blur')
+            .attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
+        filter.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', '4');
+    }
+
+    // Diffuse background rects
+    const bgTheme = themeVar('--bg-app');
+    bgGroup.selectAll('rect')
+        .data(nodes.filter(n => n._degree <= 1))
+        .join('rect')
+        .attr('rx', 3).attr('ry', 3)
+        .attr('fill', bgTheme)
+        .attr('opacity', 0.85)
+        .attr('filter', 'url(#title-blur)')
+        .attr('width', d => (d._bboxW || 48) + 16)
+        .attr('height', d => (d._bboxH || 14) + 8)
+        .attr('pointer-events', 'none');
 
     // Tooltip on hover
     let tooltip = document.querySelector('.graph-tooltip');
@@ -686,7 +867,7 @@ function renderTitles(data) {
         });
     });
 
-    // Rectangular collision force
+    // Rectangular collision force (accounts for text-anchor offset)
     function forceRectCollide() {
         let nds;
         function force(alpha) {
@@ -694,7 +875,10 @@ function renderTitles(data) {
                 for (let j = i + 1; j < nds.length; j++) {
                     const a = nds[i], b = nds[j];
                     if (a._degree > 1 || b._degree > 1) continue;
-                    const dx = b.x - a.x, dy = b.y - a.y;
+                    // Effective center accounts for left-aligned text offset
+                    const ax = a.x + (a._bboxOffsetX || 0);
+                    const bx = b.x + (b._bboxOffsetX || 0);
+                    const dx = bx - ax, dy = b.y - a.y;
                     const minDistX = (a._w + b._w) / 2;
                     const minDistY = (a._h + b._h) / 2;
                     const overlapX = minDistX - Math.abs(dx);
@@ -748,6 +932,13 @@ function renderTitles(data) {
         .on('tick', () => {
             link.attr('d', titleLinkPath);
             node.attr('transform', d => `translate(${d.x},${d.y})`);
+            bgGroup.selectAll('rect')
+                .attr('x', d => {
+                    const w = (d._bboxW || 48) + 16;
+                    const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
+                    return style.anchor === 'start' ? d.x - 8 : d.x - w / 2;
+                })
+                .attr('y', d => d.y - ((d._bboxH || 14) + 8) / 2);
         });
 
     setTimeout(() => autoZoom(nodes, d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform)), width, height), 2000);
@@ -802,18 +993,17 @@ async function showDetail(node) {
         news.map(n => `
             <div class="news-card">
                 <div class="news-meta">
-                    <span class="news-source">${n.source || ''}</span>
+                    <span class="news-source">${n.source_name || ''}</span>
                     <span class="news-date">${formatDate(n.pub_date)}</span>
                 </div>
                 <div class="news-title-row">
-                    <span class="news-title-text">${n.title || '—'}</span>
-                    ${n.link ? `<a class="news-external" href="${n.link}" target="_blank" rel="noopener" title="Abrir fuente original"><i data-feather="external-link"></i></a>` : ''}
+                    <span class="news-title-text">${trimTitle(n.title)}</span>
+                    ${n.link ? `<a class="news-external" href="${n.link}" target="_blank" rel="noopener" title="${t('detail.news.openSource')}"><i data-feather="external-link"></i></a>` : ''}
                 </div>
-                ${n.description ? `<p class="news-desc">${n.description}</p>` : ''}
-                <div class="news-claim">
-                    <span class="claim-arrow">${n.subject} → ${n.claim} → ${n.object}</span>
-                    ${n.is_disputed ? '<span class="disputed-badge">disputado</span>' : ''}
-                </div>
+                ${n._eventName ? `<div class="news-event-tag">${n._eventType ? n._eventType.replace(/_/g, ' ') + ': ' : ''}${n._eventName}</div>` : ''}
+                ${n._evidenceQuote ? `<blockquote class="news-evidence">${n._evidenceQuote}</blockquote>` : ''}
+                ${n._role ? `<div class="news-role">${n._role}</div>` : ''}
+                ${n.description ? `<p class="news-desc">${(n.description || '').slice(0, 200)}${(n.description || '').length > 200 ? '...' : ''}</p>` : ''}
             </div>
         `).join('');
 
@@ -823,67 +1013,267 @@ async function showDetail(node) {
 
 function renderDetail(node) {
     const label = node.label || 'Actor';
-    const nodeTypes = ['Person', 'Organization', 'Location', 'Object', 'Event'];
-
+    const safeName = (node.name || node.id).replace(/'/g, "\\'");
     let html = '';
 
-    // Editable type selector
-    html += `<div class="detail-type-row">
-        ${nodeDot(label, node.type)}
-        <select id="nodeTypeSelect" class="node-type-select" onchange="updateNodeType('${node.id}', this.value)">
-            ${nodeTypes.map(tp => `<option value="${tp}" ${tp === node.type ? 'selected' : ''}>${tType(tp)}</option>`).join('')}
-        </select>
+    // 1. TYPE SELECTOR
+    if (label === 'Evento') {
+        const eventTypes = (schemaData?.event_types || []).map(e => e.id);
+        html += `<div class="detail-type-row">
+            ${nodeDot(label, 'Event')}
+            <select id="nodeTypeSelect" class="node-type-select" onchange="updateNodeType('${node.id}', this.value, 'event_type')">
+                ${eventTypes.map(et => `<option value="${et}" ${et === node.event_type ? 'selected' : ''}>${et.replace(/_/g, ' ')}</option>`).join('')}
+            </select>
+            ${node.date ? `<span class="event-date-badge">${node.date}</span>` : ''}
+            ${node.is_disputed ? `<span class="disputed-badge">${t('detail.disputed')}</span>` : ''}
+        </div>`;
+    } else {
+        const nodeTypes = ['Person', 'Organization', 'Location', 'Object'];
+        html += `<div class="detail-type-row">
+            ${nodeDot(label, node.type)}
+            <select id="nodeTypeSelect" class="node-type-select" onchange="updateNodeType('${node.id}', this.value)">
+                ${nodeTypes.map(tp => `<option value="${tp}" ${tp === node.type ? 'selected' : ''}>${tType(tp)}</option>`).join('')}
+            </select>
+        </div>`;
+    }
+
+    // 2. NAME (editable)
+    html += `<h2 class="detail-name" contenteditable="true" spellcheck="false"
+        data-node-id="${node.id}" data-field="name"
+        onblur="saveNodeField(this)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur()}"
+        >${node.name || node.id}</h2>`;
+
+    // 3. DESCRIPTION (editable)
+    html += `<p class="node-description" contenteditable="true" spellcheck="false"
+        data-node-id="${node.id}" data-field="description"
+        onblur="saveNodeField(this)"
+        data-placeholder="${t('detail.addDescription') || 'Agregar descripción...'}"
+        >${node.description || ''}</p>`;
+
+    // Event-specific metadata
+    if (label === 'Evento') {
+        if (node.evidence_quote) html += `<blockquote class="evidence-quote">${node.evidence_quote}</blockquote>`;
+        if (node.source) html += `<div class="detail-meta"><i data-feather="radio" class="meta-icon"></i> ${node.source}</div>`;
+    }
+
+    // 4. ALIASES
+    html += `<div class="detail-section aliases-section" id="aliasesSection">
+        <h3>${t('detail.aliases')}</h3>
+        <div id="aliasesList" class="aliases-list"><span class="loading-inline">...</span></div>
+        <div class="alias-add-row">
+            <input type="text" id="aliasInput" class="alias-input" placeholder="${t('detail.aliases.add')}">
+            <button onclick="addAlias('${node.id}')" class="alias-add-btn">+</button>
+        </div>
     </div>`;
 
-    // Name + description
-    if (label === 'Afirmacion') {
-        html += `<h2>${node.subject} → ${node.predicate} → ${node.object}</h2>`;
-        html += `<div class="detail-section"><h3>${t('detail.event')}</h3><p>${(node.event_type || '').replace(/_/g, ' ')}</p></div>`;
-        if (node.is_disputed) html += `<p class="disputed-badge">${t('detail.disputed')}</p>`;
-        if (node.evidence_quote) html += `<div class="detail-section"><h3>${t('detail.evidence')}</h3><p class="evidence-quote">${node.evidence_quote}</p></div>`;
-    } else if (label === 'Noticia') {
-        html += `<h2>${node.title}</h2>`;
-        html += `<div class="detail-section"><h3>${t('detail.source')}</h3><p>${node.source} (${node.lang})</p></div>`;
-    } else {
-        html += `<h2>${node.name || node.id}</h2>`;
-        if (node.description) html += `<p class="node-description">${node.description}</p>`;
-    }
+    // 5. ACTION BUTTONS
+    html += `<div class="detail-actions">
+        <button class="action-btn" id="reprocessBtn" onclick="reprocessNode('${node.id}')">
+            <i data-feather="refresh-cw"></i> ${t('reprocess')}
+        </button>
+        <button class="action-btn primary" onclick="searchRelatedNews('${safeName}')">
+            <i data-feather="search"></i> ${t('searchRelatedNews')}
+        </button>
+        ${label === 'Actor' ? `<button class="action-btn" id="enrichBtn" onclick="enrichNode('${node.id}', '${safeName}')">
+            <i data-feather="globe"></i> ${t('detail.enrich')}
+        </button>` : ''}
+        <button class="action-btn danger" onclick="if(confirm('${t('detail.delete.confirm')} ${safeName}?')) deleteNode('${node.id}', '${safeName}')">
+            <i data-feather="trash-2"></i>
+        </button>
+    </div>`;
+    html += `<div id="enrichResults"></div>`;
 
-    // Aliases editor (for Actor/Evento nodes)
-    if (label === 'Actor' || label === 'Evento') {
-        html += `<div class="detail-section" id="aliasesSection">
-            <h3>${t('detail.aliases')}</h3>
-            <div id="aliasesList" class="aliases-list"><span class="loading-inline">...</span></div>
-            <div class="alias-add-row">
-                <input type="text" id="aliasInput" class="alias-input" placeholder="${t('detail.aliases.add')}">
-                <button onclick="addAlias('${node.id}')" class="alias-add-btn">+</button>
-            </div>
-        </div>`;
-
-        // Enrich button
-        html += `<div class="detail-section">
-            <div class="detail-actions-row">
-                <button class="enrich-btn" id="enrichBtn" onclick="enrichNode('${node.id}', '${(node.name || node.id).replace(/'/g, "\\'")}')">
-                    <i data-feather="globe"></i> ${t('detail.enrich')}
-                </button>
-                <button class="delete-btn" onclick="deleteNode('${node.id}', '${(node.name || node.id).replace(/'/g, "\\'")}')">
-                    <i data-feather="trash-2"></i>
-                </button>
-            </div>
-            <div id="enrichResults"></div>
-        </div>`;
-    }
+    // 6. CONNECTIONS (last, scrollable)
+    html += renderConnections(node);
 
     return html;
 }
 
+function renderConnections(node) {
+    if (!lastEgoData) return '';
+    const edges = lastEgoData.edges || [];
+    const nodes = lastEgoData.nodes || [];
+    const nodesById = new Map(nodes.map(n => [n.id, n]));
+
+    // Find all edges involving this node (skip v1 orphan types)
+    const skipTypes = new Set(['INVOLUCRA', 'REPORTA']);
+    const connections = [];
+    for (const e of edges) {
+        if (skipTypes.has(e.type)) continue;
+        const sid = typeof e.source === 'object' ? e.source.id : e.source;
+        const tid = typeof e.target === 'object' ? e.target.id : e.target;
+        if (sid === node.id) {
+            const other = nodesById.get(tid);
+            if (other && other.name && !other.name.startsWith('aHR0')) connections.push({ node: other, edge: e, direction: 'out' });
+        } else if (tid === node.id) {
+            const other = nodesById.get(sid);
+            if (other && other.name && !other.name.startsWith('aHR0')) connections.push({ node: other, edge: e, direction: 'in' });
+        }
+    }
+
+    if (!connections.length) return '';
+
+    // Group by NODE TYPE for columnar layout
+    const typeOrder = ['Person', 'Location', 'Organization', 'Event', 'Object'];
+    const typeLabels = { Person: t('type.Person'), Location: t('type.Location'), Organization: t('type.Organization'), Event: t('type.Event'), Object: t('type.Object') };
+    const byType = {};
+    for (const c of connections) {
+        const ntype = c.node.type || c.node.label || 'Object';
+        if (!byType[ntype]) byType[ntype] = [];
+        byType[ntype].push(c);
+    }
+
+    let html = `<div class="detail-section connections-section">`;
+    html += `<h3>${t('detail.connections')} (${connections.length})</h3>`;
+    html += `<div class="conn-columns">`;
+
+    for (const type of typeOrder) {
+        const conns = byType[type];
+        if (!conns || !conns.length) continue;
+        const largeClass = conns.length > 4 ? ' conn-large' : '';
+        html += `<div class="conn-column${largeClass}" data-type="${type}">
+            <div class="conn-column-label">${nodeDot(type, type)} ${typeLabels[type] || type} <span class="conn-count">${conns.length}</span></div>`;
+        for (const c of conns) {
+            const n = c.node;
+            const edgeLabel = tEdge(c.edge.type);
+            const role = c.edge.role ? ` — ${c.edge.role}` : '';
+            html += `<div class="conn-item" onclick="navigateTo('${n.id}')" title="${edgeLabel}${role}">
+                <span class="conn-name">${n.name || n.id}</span>
+                <span class="conn-edge-tag">${edgeLabel}</span>
+            </div>`;
+        }
+        html += `</div>`;
+    }
+
+    // Catch any types not in typeOrder
+    for (const [type, conns] of Object.entries(byType)) {
+        if (typeOrder.includes(type)) continue;
+        const largeClass = conns.length > 4 ? ' conn-large' : '';
+        html += `<div class="conn-column${largeClass}" data-type="${type}">
+            <div class="conn-column-label">${nodeDot(type, type)} ${typeLabels[type] || type} <span class="conn-count">${conns.length}</span></div>`;
+        for (const c of conns) {
+            const n = c.node;
+            const edgeLabel = tEdge(c.edge.type);
+            html += `<div class="conn-item" onclick="navigateTo('${n.id}')" title="${edgeLabel}">
+                <span class="conn-name">${n.name || n.id}</span>
+                <span class="conn-edge-tag">${edgeLabel}</span>
+            </div>`;
+        }
+        html += `</div>`;
+    }
+
+    html += `</div></div>`;
+    return html;
+}
+
+async function searchRelatedNews(query) {
+    // Switch to feed tab and search web
+    switchRightTab('feed');
+    searchWebNews(query);
+}
+
+async function reprocessNode(nodeId) {
+    const btn = document.querySelector('.action-btn[onclick*="reprocessNode"]');
+    if (!btn || btn.classList.contains('processing')) return;
+
+    btn.classList.add('processing');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = `<span class="pulse-dot"></span> <span class="reprocess-label">${t('reprocess.searching')}</span>`;
+
+    const actionsDiv = btn.closest('.detail-actions');
+    let progressEl = document.getElementById('reprocessProgress');
+    if (progressEl) progressEl.remove();
+    actionsDiv.insertAdjacentHTML('afterend', `
+        <div id="reprocessProgress" class="reprocess-progress">
+            <div class="reprocess-bar-track">
+                <div class="reprocess-bar-fill" id="reprocessBarFill"></div>
+            </div>
+            <div class="reprocess-status" id="reprocessStatus"></div>
+        </div>
+    `);
+
+    const barFill = document.getElementById('reprocessBarFill');
+    const statusEl = document.getElementById('reprocessStatus');
+
+    function setProgress(pct, msg) {
+        barFill.style.width = pct + '%';
+        statusEl.textContent = msg;
+        const label = btn.querySelector('.reprocess-label');
+        if (label) label.textContent = msg;
+    }
+
+    try {
+        setProgress(10, 'Buscando relaciones latentes...');
+
+        const response = await fetch(`${API}/api/node/discover`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: nodeId })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let discovered = 0;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const msg = JSON.parse(line.slice(6));
+                    if (msg.type === 'status') {
+                        setProgress(Math.min(30 + discovered * 10, 90), msg.message);
+                    } else if (msg.type === 'discovered') {
+                        discovered++;
+                        const reason = msg.reason || msg.edge?.role || '';
+                        setProgress(Math.min(30 + discovered * 10, 90), `+${discovered}: ${msg.targetNode?.name || msg.edge?.target} (${reason})`);
+                    } else if (msg.type === 'done') {
+                        setProgress(95, 'Actualizando grafo...');
+                    } else if (msg.type === 'error') {
+                        setProgress(100, 'Error: ' + msg.message);
+                    }
+                } catch {}
+            }
+        }
+
+        // Reload the ego to show new connections
+        await navigateTo(nodeId);
+        setProgress(100, discovered > 0
+            ? `✓ ${discovered} relaciones descubiertas`
+            : 'Sin relaciones latentes nuevas');
+    } catch (err) {
+        setProgress(100, 'Error: ' + err.message);
+    }
+
+    setTimeout(() => finishReprocess(), 3000);
+
+    function finishReprocess() {
+        btn.classList.remove('processing');
+        btn.innerHTML = originalHTML;
+        if (typeof feather !== 'undefined') feather.replace();
+        const prog = document.getElementById('reprocessProgress');
+        if (prog) prog.remove();
+    }
+}
+
 // --- Node editing ---
 
-async function updateNodeType(nodeId, newType) {
+async function updateNodeType(nodeId, newValue, field) {
+    const body = { id: nodeId };
+    if (field === 'event_type') body.event_type = newValue;
+    else body.type = newValue;
     await fetch(`${API}/api/node/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: nodeId, type: newType })
+        body: JSON.stringify(body)
     });
 }
 
@@ -1081,7 +1471,7 @@ async function searchWebNews(query) {
                         <span class="news-source">${src}</span>
                         <span class="news-date">${date}</span>
                     </div>
-                    <div class="news-title">${item.title}</div>
+                    <div class="news-title">${trimTitle(item.title)}</div>
                     <div class="news-actions">
                         <button class="ingest-btn" onclick="ingestFromWeb(this, '${esc(item.title)}', '${esc(item.link)}', '${esc(src)}', '${esc(item.pubDate)}')">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path></svg>
@@ -1100,23 +1490,9 @@ async function searchWebNews(query) {
 
 async function ingestFromWeb(btn, title, link, source, pubDate) {
     btn.disabled = true;
-    btn.textContent = '...';
-    try {
-        const res = await fetch(`${API}/api/news/ingest-url`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, link, source, pubDate })
-        });
-        const data = await res.json();
-        if (data.ok) {
-            btn.textContent = '✓';
-            btn.classList.add('ingested');
-        } else {
-            btn.textContent = '✗';
-        }
-    } catch {
-        btn.textContent = '✗';
-    }
+    btn.innerHTML = '<span class="pulse-dot"></span>';
+    // Pass focalId so the backend guarantees a link back to the origin node
+    streamProcessNews({ title, link, source, description: '', contextNodeId: focalId || null }, btn);
 }
 
 // --- Split handle ---
@@ -1124,18 +1500,33 @@ async function ingestFromWeb(btn, title, link, source, pubDate) {
 function setupSplitHandle() {
     const handle = document.getElementById('splitHandle');
     const splitLeft = document.querySelector('.split-left');
+    const splitRight = document.querySelector('.split-right');
     let dragging = false;
+    const MIN_LEFT = 250;  // px
+    const MIN_RIGHT = 280; // px
+
+    // Restore saved ratio
+    const saved = localStorage.getItem('os-split-ratio');
+    if (saved) splitLeft.style.flex = `0 0 ${saved}%`;
 
     handle.addEventListener('pointerdown', e => {
         dragging = true;
         handle.classList.add('dragging');
         handle.setPointerCapture(e.pointerId);
+        e.preventDefault();
     });
     handle.addEventListener('pointermove', e => {
         if (!dragging) return;
-        const rect = handle.parentElement.getBoundingClientRect();
-        const ratio = Math.max(0.2, Math.min(0.8, (e.clientX - rect.left) / rect.width));
-        splitLeft.style.flex = `0 0 ${ratio * 100}%`;
+        const parent = handle.parentElement;
+        const rect = parent.getBoundingClientRect();
+        const totalW = rect.width;
+        const x = e.clientX - rect.left;
+
+        // Clamp to pixel minimums
+        const clamped = Math.max(MIN_LEFT, Math.min(totalW - MIN_RIGHT, x));
+        const ratio = (clamped / totalW) * 100;
+        splitLeft.style.flex = `0 0 ${ratio}%`;
+        localStorage.setItem('os-split-ratio', ratio.toFixed(1));
     });
     handle.addEventListener('pointerup', () => {
         dragging = false;
@@ -1215,9 +1606,33 @@ async function enrichNode(nodeId, nodeName) {
     } catch (err) {
         results.innerHTML = `<p class="ingest-hint">Error: ${err.message}</p>`;
         btn.disabled = false;
-        btn.innerHTML = '<i data-feather="globe"></i> Enriquecer desde Wikidata';
+        btn.innerHTML = `<i data-feather="globe"></i> ${t('detail.enrich')}`;
     }
     if (typeof feather !== 'undefined') feather.replace();
+}
+
+async function saveNodeField(el) {
+    const nodeId = el.dataset.nodeId;
+    const field = el.dataset.field;
+    const newValue = el.textContent.trim();
+    if (!newValue || !nodeId) return;
+    try {
+        const res = await fetch(`/api/node/${encodeURIComponent(nodeId)}/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [field]: newValue })
+        });
+        if (res.ok) {
+            console.log(`Nodo ${nodeId}: ${field} → "${newValue}"`);
+            // Update in current ego data
+            if (lastEgoData) {
+                const n = lastEgoData.nodes.find(n => n.id === nodeId);
+                if (n) n[field] = newValue;
+            }
+        }
+    } catch (e) {
+        console.error('Error updating node:', e);
+    }
 }
 
 async function deleteNode(nodeId, nodeName) {
@@ -1249,7 +1664,7 @@ function cancelEnrich() {
 
 async function applyEnrichment(nodeId, nodeName) {
     const results = document.getElementById('enrichResults');
-    results.innerHTML = '<p class="loading-inline">Aplicando...</p>';
+    results.innerHTML = `<p class="loading-inline">${t('detail.enrich.applying')}</p>`;
 
     await fetch(`${API}/api/node/enrich`, {
         method: 'POST',
@@ -1343,7 +1758,7 @@ async function pollIngestStatus(nodeId) {
             const news = await newsRes.json();
             const section = document.getElementById('newsSection');
             if (section && news.length > 0) {
-                section.querySelector('h3').textContent = `Noticias (${news.length})`;
+                section.querySelector('h3').textContent = `${t('detail.news')} (${news.length})`;
             }
         }
     }, 5000);
@@ -1393,7 +1808,7 @@ async function refreshProcessStatus() {
             </div>
             <div class="process-stat">
                 <span class="process-stat-value">${pct}%</span>
-                <span class="process-stat-label">Total</span>
+                <span class="process-stat-label">${t('process.total')}</span>
             </div>
         `;
     } catch {}
@@ -1402,14 +1817,14 @@ async function refreshProcessStatus() {
 async function fetchNewRSS() {
     const btn = document.getElementById('fetchRssBtn');
     btn.disabled = true;
-    btn.innerHTML = '<i data-feather="loader"></i> Fetching...';
+    btn.innerHTML = `<i data-feather="loader"></i> ${t('process.fetching')}`;
     if (typeof feather !== 'undefined') feather.replace();
 
     await fetch(`${API}/api/ingest/fetch`, { method: 'POST' });
 
     setTimeout(() => {
         btn.disabled = false;
-        btn.innerHTML = '<i data-feather="rss"></i> Fetch RSS';
+        btn.innerHTML = `<i data-feather="rss"></i> ${t('process.fetch')}`;
         if (typeof feather !== 'undefined') feather.replace();
         refreshProcessStatus();
     }, 10000);
@@ -1434,11 +1849,19 @@ function switchRightTab(tab) {
     }
 }
 
+let feedSortOrder = 'date';
+
+function changeFeedSort(val) {
+    feedSortOrder = val;
+    feedPage = 0;
+    loadNewsFeed();
+}
+
 async function loadNewsFeed(append) {
     const feed = document.getElementById('newsFeed');
     if (!append) { feed.innerHTML = ''; feedPage = 0; }
 
-    const res = await fetch(`${API}/api/news/feed?page=${feedPage}`);
+    const res = await fetch(`${API}/api/news/feed?page=${feedPage}&sort=${feedSortOrder}`);
     const data = await res.json();
     feedTotal = data.total;
 
@@ -1451,11 +1874,12 @@ async function loadNewsFeed(append) {
                 <span class="feed-item-source">${item.source_name || ''}</span>
                 <span class="feed-item-date">${formatDate(item.pub_date)}</span>
             </div>
-            <div class="feed-item-title">${item.title || '—'}</div>
+            <div class="feed-item-title">${trimTitle(item.title)}</div>
             <div class="feed-item-status">
                 <span class="feed-status-dot ${item._inGraph ? 'in-graph' : 'pending'}"></span>
-                <span class="feed-status-label">${item._inGraph ? `${item._claimCount} claims` : t('ingest.status.pending')}</span>
+                <span class="feed-status-label">${item._inGraph ? `${item._actorCount} ${t('feed.actors')}` : t('ingest.status.pending')}</span>
             </div>
+            ${item._eventName ? `<div class="feed-item-event">${item._eventName}</div>` : ''}
         `;
         feed.appendChild(el);
     }
@@ -1470,51 +1894,211 @@ function loadMoreFeed() {
 }
 
 async function showNewsEgo(link, title) {
-    // Show processing state in the feed item
+    // Mark feed item as processing
     const feedItems = document.querySelectorAll('.feed-item');
     let targetItem = null;
     feedItems.forEach(el => {
         if (el.querySelector('.feed-item-title')?.textContent === title) {
             targetItem = el;
-            el.style.opacity = '0.5';
-            el.insertAdjacentHTML('beforeend', '<div class="feed-processing">Procesando con Ollama...</div>');
+            el.classList.add('processing');
         }
     });
 
-    try {
-        const res = await fetch(`${API}/api/news/process`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ link })
-        });
-        const data = await res.json();
+    streamProcessNews({ link, title }, targetItem);
+}
 
-        if (targetItem) {
-            targetItem.style.opacity = '1';
-            targetItem.querySelector('.feed-processing')?.remove();
-        }
+/**
+ * Core streaming processor: sends news to /api/news/process (SSE),
+ * renders focal node immediately, then adds actors one by one to the D3 graph.
+ */
+function streamProcessNews(params, feedBtn) {
+    // Prepare a fresh graph with just a "processing" placeholder
+    const container = document.getElementById('graphPanel');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const cx = width / 2, cy = height / 2;
 
-        if (!data.focal) return;
+    // Kill old simulation
+    if (simulation) simulation.stop();
+    d3.select('#graph').selectAll('*').remove();
+    svg = d3.select('#graph').attr('width', width).attr('height', height);
 
-        // Switch to node tab and render
-        switchRightTab('node');
-        focalId = data.focal.id;
-        lastEgoData = data;
+    // Defs
+    const defs = svg.append('defs');
+    const edgeTypes = schemaData?.graph?.edges || {};
+    Object.keys(edgeTypes).forEach(type => {
+        const v = edgeVisual(type);
+        defs.append('marker')
+            .attr('id', `arrow-${type}`)
+            .attr('viewBox', '0 0 10 10')
+            .attr('refX', 20).attr('refY', 5)
+            .attr('markerWidth', 5).attr('markerHeight', 5)
+            .attr('orient', 'auto')
+            .append('path').attr('d', 'M 0 0 L 10 5 L 0 10 Z').attr('fill', v.color);
+    });
 
-        history = [{ id: focalId, name: data.focal.name || title, edge: null }];
-        renderBreadcrumbs();
+    g = svg.append('g');
+    const zoomBehavior = d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform));
+    svg.call(zoomBehavior);
 
-        if (currentView === 'titles') renderTitles(data);
-        else renderEgo(data);
+    linkGroup = g.append('g');
+    nodeGroup = g.append('g');
 
-        showDetail(data.focal);
-    } catch (err) {
-        if (targetItem) {
-            targetItem.style.opacity = '1';
-            const proc = targetItem.querySelector('.feed-processing');
-            if (proc) proc.textContent = 'Error: ' + err.message;
-        }
+    // Live data arrays that D3 will bind to
+    const liveNodes = [];
+    const liveEdges = [];
+    let liveSimulation = null;
+
+    function rebuildSimulation() {
+        if (liveSimulation) liveSimulation.stop();
+
+        liveSimulation = d3.forceSimulation(liveNodes)
+            .force('link', d3.forceLink(liveEdges).id(d => d.id).distance(100).strength(0.4))
+            .force('charge', d3.forceManyBody().strength(d => d._degree === 0 ? -400 : -120))
+            .force('center', d3.forceCenter(cx, cy).strength(0.05))
+            .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 6))
+            .on('tick', () => {
+                linkGroup.selectAll('line')
+                    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+                nodeGroup.selectAll('g.live-node')
+                    .attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+        // Pin focal
+        const focal = liveNodes.find(n => n._degree === 0);
+        if (focal) { focal.fx = cx; focal.fy = cy; }
+
+        simulation = liveSimulation;
+        currentSimulation = liveSimulation;
     }
+
+    function addNodeToGraph(nodeData, edgeData) {
+        // Add to live data
+        if (!liveNodes.find(n => n.id === nodeData.id)) {
+            liveNodes.push(nodeData);
+        }
+        if (edgeData) {
+            liveEdges.push(edgeData);
+        }
+
+        // Re-bindlinks
+        linkGroup.selectAll('line')
+            .data(liveEdges, d => `${d.source?.id || d.source}-${d.target?.id || d.target}`)
+            .join(
+                enter => enter.append('line')
+                    .attr('stroke', d => edgeVisual(d.type).color)
+                    .attr('stroke-width', d => edgeVisual(d.type).width)
+                    .attr('opacity', 0)
+                    .transition().duration(500).attr('opacity', 0.6)
+            );
+
+        // Re-bind nodes
+        const nodeSel = nodeGroup.selectAll('g.live-node')
+            .data(liveNodes, d => d.id);
+
+        const enter = nodeSel.enter().append('g')
+            .attr('class', 'live-node')
+            .attr('cursor', 'pointer')
+            .style('opacity', 0)
+            .on('click', (e, d) => {
+                if (d.label === 'Actor' || d.label === 'Evento') navigateTo(d.id);
+                else showDetail(d);
+            })
+            .call(makeDrag());
+
+        enter.append('circle')
+            .attr('r', d => nodeRadius(d))
+            .attr('fill', d => nodeColor(d))
+            .attr('stroke', d => d._degree === 0 ? '#fff' : nodeStroke(d))
+            .attr('stroke-width', d => nodeStrokeWidth(d));
+
+        enter.append('text')
+            .text(d => truncLabel(d.name || d.id))
+            .attr('font-size', d => d._degree === 0 ? 13 : 10)
+            .attr('font-weight', d => d._degree === 0 ? 700 : 400)
+            .attr('fill', d => graphLabelColor(d))
+            .attr('text-anchor', 'middle')
+            .attr('dy', d => nodeRadius(d) + 13)
+            .attr('pointer-events', 'none');
+
+        // Animate entrance
+        enter.transition().duration(400).style('opacity', 1);
+
+        rebuildSimulation();
+    }
+
+    // Start SSE request
+    fetch(`${API}/api/news/process`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params)
+    }).then(async response => {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            // Parse SSE lines
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // keep incomplete line
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const msg = JSON.parse(line.slice(6));
+
+                    if (msg.type === 'focal') {
+                        focalId = msg.node.id;
+                        addNodeToGraph(msg.node, null);
+                        history = [{ id: focalId, name: msg.node.name, edge: null }];
+                        renderBreadcrumbs();
+                    }
+                    else if (msg.type === 'node') {
+                        addNodeToGraph(msg.node, msg.edge);
+                    }
+                    else if (msg.type === 'edge') {
+                        liveEdges.push(msg.edge);
+                        rebuildSimulation();
+                    }
+                    else if (msg.type === 'done') {
+                        // Update lastEgoData for detail panel
+                        lastEgoData = {
+                            focal: liveNodes.find(n => n._degree === 0),
+                            nodes: [...liveNodes],
+                            edges: [...liveEdges]
+                        };
+                        // Show detail of the focal event
+                        const focalNode = liveNodes.find(n => n._degree === 0);
+                        if (focalNode) showDetail(focalNode);
+
+                        // Update feed button
+                        if (feedBtn) {
+                            if (feedBtn.tagName === 'BUTTON') {
+                                feedBtn.textContent = '✓';
+                                feedBtn.classList.add('ingested');
+                            } else {
+                                feedBtn.classList?.remove('processing');
+                                const dot = feedBtn.querySelector?.('.feed-status-dot');
+                                if (dot) dot.classList.replace('pending', 'in-graph');
+                            }
+                        }
+                    }
+                    else if (msg.type === 'error') {
+                        console.error('Process error:', msg.message);
+                        if (feedBtn?.tagName === 'BUTTON') feedBtn.textContent = '✗';
+                    }
+                } catch {}
+            }
+        }
+    }).catch(err => {
+        console.error('Stream error:', err);
+        if (feedBtn?.tagName === 'BUTTON') feedBtn.textContent = '✗';
+    });
 }
 
 // --- Console ---
@@ -1587,7 +2171,8 @@ function formatDate(str) {
     if (!str) return '';
     try {
         const d = new Date(str);
-        return d.toLocaleDateString('es-CL', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const locale = currentLang === 'es' ? 'es-CL' : 'en-US';
+        return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch { return str; }
 }
 
@@ -1596,5 +2181,5 @@ function formatDate(str) {
 init().catch(err => {
     console.error('Error:', err);
     document.getElementById('graphPanel').innerHTML =
-        '<div class="loading">Cargando grafo...</div>';
+        `<div class="loading">${t('loading.graph')}</div>`;
 });

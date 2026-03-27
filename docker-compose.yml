@@ -7,12 +7,12 @@ services:
       - "5432:5432"
     environment:
       - POSTGRES_USER=os_admin
-      - POSTGRES_PASSWORD=overstanding_pass
-      - POSTGRES_DB=overstanding
+      - POSTGRES_PASSWORD=lombardi_pass
+      - POSTGRES_DB=lombardi
     volumes:
       - ./data/db:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U os_admin -d overstanding"]
+      test: ["CMD-SHELL", "pg_isready -U os_admin -d lombardi"]
       interval: 10s
       timeout: 5s
       retries: 5
