@@ -265,6 +265,25 @@ body {
     margin-top: var(--space-sm);
 }
 
+.console-toggle {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--ink-faint);
+    border-radius: 4px;
+    padding: 4px 6px;
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease-default);
+    display: flex;
+    align-items: center;
+}
+
+.console-toggle:hover {
+    color: var(--ink-primary);
+    border-color: var(--border-default);
+}
+
+.console-toggle svg { width: 14px; height: 14px; }
+
 .lang-toggle {
     background: var(--bg-surface-alt);
     color: var(--ink-primary);
@@ -376,3 +395,72 @@ body {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- Console drawer --- */
+.console-drawer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 280px;
+    background: #0a0c10;
+    border-top: 1px solid var(--border-default);
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    transition: transform var(--duration-slow) var(--ease-default);
+}
+
+.console-drawer[hidden] { display: none; }
+
+.console-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-xs) var(--space-md);
+    border-bottom: 1px solid var(--border-default);
+    flex-shrink: 0;
+}
+
+.console-header h4 {
+    font-size: var(--font-size-sm);
+    font-family: var(--font-mono);
+    color: var(--ink-muted);
+    font-weight: 400;
+}
+
+.console-output {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-sm) var(--space-md);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+}
+
+.console-output .log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.console-output .log-line.log-error {
+    color: #E74C3C;
+}
+
+.console-output .log-line.log-saved {
+    color: #2ECC71;
+}
+
+.console-output .log-line.log-event {
+    color: #E67E22;
+}
+
+.console-output .log-line.log-entity {
+    color: #5DADE2;
+}
+
+.console-output .log-line.log-title {
+    color: #fff;
+    font-weight: 600;
+}

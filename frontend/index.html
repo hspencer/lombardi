@@ -29,11 +29,15 @@
                 <div id="processDetails" class="process-details"></div>
                 <div class="process-actions">
                     <button id="fetchRssBtn" class="ingest-btn" onclick="fetchNewRSS()">
-                        <i data-feather="rss"></i> <span data-i18n="process.fetch">Fetch RSS</span>
+                        <i data-feather="rss"></i> <span>Fetch RSS</span>
+                    </button>
+                    <button class="ingest-btn" onclick="toggleConsole()">
+                        <i data-feather="terminal"></i> <span>Console</span>
                     </button>
                 </div>
             </div>
         </div>
+        <button class="console-toggle" onclick="toggleConsole()" title="Console"><i data-feather="terminal"></i></button>
         <button id="langToggle" class="lang-toggle" onclick="toggleLang()">ES</button>
     </header>
 
@@ -57,6 +61,15 @@
             </div>
         </div>
     </main>
+
+    <!-- Console drawer -->
+    <div id="consoleDrawer" class="console-drawer" hidden>
+        <div class="console-header">
+            <h4>Console</h4>
+            <button onclick="toggleConsole()" class="detail-close">&times;</button>
+        </div>
+        <div id="consoleOutput" class="console-output"></div>
+    </div>
 
     <script src="https://unpkg.com/feather-icons"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>

@@ -1339,6 +1339,70 @@ async function fetchNewRSS() {
     }, 10000);
 }
 
+// --- Console ---
+
+let consoleOpen = false;
+let consoleEventSource = null;
+
+function toggleConsole() {
+    consoleOpen = !consoleOpen;
+    const drawer = document.getElementById('consoleDrawer');
+    drawer.hidden = !consoleOpen;
+
+    if (consoleOpen) {
+        startConsoleStream();
+    } else {
+        stopConsoleStream();
+    }
+}
+
+function startConsoleStream() {
+    if (consoleEventSource) consoleEventSource.close();
+
+    const output = document.getElementById('consoleOutput');
+    output.innerHTML = '';
+
+    consoleEventSource = new EventSource(`${API}/api/ingest/log`);
+    consoleEventSource.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        const line = data.line;
+
+        const el = document.createElement('div');
+        el.className = 'log-line';
+
+        // Color coding
+        if (line.includes('ERROR') || line.includes('GRAPH ERROR')) {
+            el.classList.add('log-error');
+        } else if (line.includes('Guardado en grafo')) {
+            el.classList.add('log-saved');
+        } else if (line.includes('Evento:')) {
+            el.classList.add('log-event');
+        } else if (line.includes('Entidades:')) {
+            el.classList.add('log-entity');
+        } else if (line.includes('Procesando')) {
+            el.classList.add('log-title');
+        }
+
+        el.textContent = line;
+        output.appendChild(el);
+
+        // Auto-scroll to bottom
+        output.scrollTop = output.scrollHeight;
+
+        // Limit lines
+        while (output.children.length > 500) {
+            output.removeChild(output.firstChild);
+        }
+    };
+}
+
+function stopConsoleStream() {
+    if (consoleEventSource) {
+        consoleEventSource.close();
+        consoleEventSource = null;
+    }
+}
+
 // --- Helpers ---
 
 function formatDate(str) {

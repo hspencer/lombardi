@@ -797,6 +797,54 @@ async function handleAPI(req, res) {
         return;
     }
 
+    // === INGEST LOG STREAM (SSE) ===
+    if (url.pathname === '/api/ingest/log') {
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+
+        const LOG_PATH = '/tmp/os_ingest.log';
+        let lastSize = 0;
+
+        // Send existing tail
+        try {
+            const stat = fs.statSync(LOG_PATH);
+            lastSize = Math.max(0, stat.size - 4000); // last 4KB
+            const fd = fs.openSync(LOG_PATH, 'r');
+            const buf = Buffer.alloc(stat.size - lastSize);
+            fs.readSync(fd, buf, 0, buf.length, lastSize);
+            fs.closeSync(fd);
+            lastSize = stat.size;
+            const lines = buf.toString('utf-8').split('\n').filter(Boolean);
+            lines.forEach(line => {
+                res.write(`data: ${JSON.stringify({ line })}\n\n`);
+            });
+        } catch {}
+
+        // Watch for new lines
+        const interval = setInterval(() => {
+            try {
+                const stat = fs.statSync(LOG_PATH);
+                if (stat.size > lastSize) {
+                    const fd = fs.openSync(LOG_PATH, 'r');
+                    const buf = Buffer.alloc(stat.size - lastSize);
+                    fs.readSync(fd, buf, 0, buf.length, lastSize);
+                    fs.closeSync(fd);
+                    lastSize = stat.size;
+                    const lines = buf.toString('utf-8').split('\n').filter(Boolean);
+                    lines.forEach(line => {
+                        res.write(`data: ${JSON.stringify({ line })}\n\n`);
+                    });
+                }
+            } catch {}
+        }, 1000);
+
+        req.on('close', () => clearInterval(interval));
+        return;
+    }
+
     // === INGEST STATUS ===
     if (url.pathname === '/api/ingest/status') {
         const RAW_DIR = path.join(__dirname, '../data/raw_news');
