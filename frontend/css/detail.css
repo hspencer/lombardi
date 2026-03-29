@@ -698,6 +698,79 @@
     background: var(--accent);
     color: var(--ink-inverse, #fff);
 }
+.search-create-option {
+    border-top: 1px solid var(--border-default);
+    color: var(--ink-muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.search-create-option:hover {
+    background: var(--bg-surface-alt);
+    color: var(--ink-primary);
+}
+
+/* --- Create Node Modal --- */
+.create-node-modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.create-node-modal {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    padding: var(--space-lg);
+    width: 340px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+.create-node-modal h3 {
+    margin: 0 0 var(--space-md);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+    text-transform: uppercase;
+    letter-spacing: .1ex;
+    color: var(--ink-muted);
+}
+.create-node-modal label {
+    display: block;
+    font-size: var(--font-size-xs);
+    color: var(--ink-muted);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: .05ex;
+}
+.create-node-modal input,
+.create-node-modal select {
+    width: 100%;
+    padding: 6px 8px;
+    font-size: var(--font-size-sm);
+    font-family: var(--font-sans);
+    background: var(--bg-app);
+    color: var(--ink-primary);
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    margin-bottom: var(--space-sm);
+    box-sizing: border-box;
+}
+.create-node-row {
+    display: flex;
+    gap: var(--space-sm);
+}
+.create-node-field {
+    flex: 1;
+}
+.create-node-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+    margin-top: var(--space-md);
+}
 
 .search-loading {
     padding: var(--space-lg);
@@ -1028,7 +1101,11 @@
 .event-date-badge {
     font-size: var(--font-size-xs);
     color: var(--ink-muted);
-    font-family: var(--font-mono);
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 400;
+    margin-left: auto;
+    white-space: nowrap;
 }
 .disputed-badge {
     font-size: var(--font-size-xs);

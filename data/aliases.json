@@ -431,6 +431,11 @@
         "the EU",
         "union-europea"
       ]
+    },
+    "herbert-spencer": {
+      "canonical": "Herbert Spencer",
+      "type": "[object Object]",
+      "aliases": []
     }
   }
 }

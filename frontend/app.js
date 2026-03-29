@@ -80,7 +80,7 @@ function formatDate(dateStr) {
         const dayName = days[date.getDay()];
         const monthName = months[date.getMonth()];
         return currentLang === 'es'
-            ? `${dayName} ${day} de ${monthName}, ${year}`
+            ? `${dayName} ${day} de ${monthName} de ${year}`
             : `${dayName} ${monthName} ${day}, ${year}`;
     } catch { return dateStr; }
 }
@@ -247,39 +247,46 @@ function applyDegreeFilter(deg) {
 }
 
 /* Composed visibility filter: degree + timeline date range.
-   Works for both 'nodes' and 'titles' views via opacity transitions. */
+   In 'nodes' view, updates the force simulation so the layout reacts structurally.
+   In 'titles'/'territory' views, uses opacity transitions. */
 function applyVisibilityFilter() {
     if (!lastEgoData) return;
 
     const svgSel = d3.select('#graph');
     const allNodes = lastEgoData.nodes;
 
-    // 1. Degree filter
-    const degreePassIds = new Set(
-        allNodes.filter(n => (n._degree || 0) <= currentDegree).map(n => n.id)
-    );
-
-    // 2. Date filter (from Timeline module)
+    // 1. Degree + date filter
     const dateFilter = (typeof Timeline !== 'undefined') ? Timeline.getVisibleDateIds() : null;
+    let candidates = allNodes.filter(n => {
+        if (n.id === focalId) return true;
+        if ((n._degree || 0) > currentDegree) return false;
+        if (dateFilter && n.label === 'Evento' && !dateFilter.has(n.id)) return false;
+        return true;
+    });
 
-    // 3. Compose: node visible if passes BOTH filters
-    const visibleIds = new Set();
-    for (const n of allNodes) {
-        if (!degreePassIds.has(n.id)) continue;
-        // Date filter applies to ALL Evento nodes when timeline is active
-        if (dateFilter && n.label === 'Evento' && !dateFilter.has(n.id)) continue;
-        visibleIds.add(n.id);
+    // 2. Adaptive cap: limit nodes per degree level
+    const NODE_CAP = { 1: 25, 2: 60, 3: Infinity };
+    const cap = NODE_CAP[currentDegree] || 25;
+    if (candidates.length > cap + 1) {
+        const focal = candidates.filter(n => n.id === focalId);
+        const rest = candidates.filter(n => n.id !== focalId)
+            .sort((a, b) => (b._connectionCount || 0) - (a._connectionCount || 0))
+            .slice(0, cap);
+        candidates = [...focal, ...rest];
     }
 
+    const visibleIds = new Set(candidates.map(n => n.id));
+
     if (currentView === 'nodes') {
-        // Nodes view: transition .ego-node, .ego-edge, .ego-label
+        // Mark hidden state on each node for simulation forces
+        allNodes.forEach(n => { n._hidden = !visibleIds.has(n.id); });
+
+        // Update D3 selections: join with visibility
         svgSel.selectAll('.ego-node')
-            .transition().duration(300)
-            .style('opacity', d => visibleIds.has(d.id) ? (d._degree <= 1 ? 1 : 0.4) : 0)
-            .style('pointer-events', d => visibleIds.has(d.id) ? 'all' : 'none');
+            .style('opacity', d => d._hidden ? 0 : (d._degree <= 1 ? 1 : 0.4))
+            .style('pointer-events', d => d._hidden ? 'none' : 'all');
 
         svgSel.selectAll('.ego-edge')
-            .transition().duration(300)
             .style('opacity', d => {
                 const sid = d.source?.id || d.source;
                 const tid = d.target?.id || d.target;
@@ -287,11 +294,28 @@ function applyVisibilityFilter() {
             });
 
         svgSel.selectAll('.ego-label')
-            .transition().duration(300)
             .style('opacity', d => {
                 if (!visibleIds.has(d.id)) return 0;
                 return d._degree <= 1 ? 1 : 0;
             });
+
+        // Update simulation: hidden nodes get pushed far away with no forces
+        if (simulation) {
+            // Update link force to only act on visible edges
+            const linkForce = simulation.force('link');
+            if (linkForce) {
+                linkForce.strength(d => {
+                    const sid = d.source?.id || d.source;
+                    const tid = d.target?.id || d.target;
+                    if (!visibleIds.has(sid) || !visibleIds.has(tid)) return 0;
+                    const base = d.type === 'CONTRADICE' ? 0.05 : d.type === 'SOSTIENE' ? 0.8 : 0.4;
+                    return territoryEnabled ? base * 0.05 : base;
+                });
+            }
+
+            // Reheat simulation so layout adjusts
+            simulation.alpha(0.3).restart();
+        }
     } else if (currentView === 'territory') {
         // Territory view: transition labels + dim zones
         if (nodeGroup) {
@@ -309,12 +333,36 @@ function applyVisibilityFilter() {
                 return visibleIds.has(sid) && visibleIds.has(tid) ? 0.3 : 0.02;
             });
     } else {
-        // Titles view: transition nodeGroup children (g elements with data)
+        // Titles view: mark hidden + update simulation structurally
+        allNodes.forEach(n => { n._hidden = !visibleIds.has(n.id); });
+
         if (nodeGroup) {
             nodeGroup.selectAll('g')
-                .transition().duration(300)
-                .attr('visibility', d => visibleIds.has(d.id) ? 'visible' : 'hidden')
+                .style('visibility', d => visibleIds.has(d.id) ? 'visible' : 'hidden')
                 .style('opacity', d => visibleIds.has(d.id) ? 1 : 0);
+        }
+        // Update link edges opacity
+        if (linkGroup) {
+            linkGroup.selectAll('g')
+                .style('opacity', d => {
+                    const sid = d.source?.id || d.source;
+                    const tid = d.target?.id || d.target;
+                    return visibleIds.has(sid) && visibleIds.has(tid) ? 1 : 0;
+                });
+        }
+
+        // Update simulation forces for structural change
+        if (simulation) {
+            const linkForce = simulation.force('link');
+            if (linkForce) {
+                linkForce.strength(d => {
+                    const sid = d.source?.id || d.source;
+                    const tid = d.target?.id || d.target;
+                    if (!visibleIds.has(sid) || !visibleIds.has(tid)) return 0;
+                    return panoramaMode ? 0.5 : 0.25;
+                });
+            }
+            simulation.alpha(0.3).restart();
         }
     }
 }
@@ -747,6 +795,7 @@ async function renderEgo(data) {
         )
         .force('charge', d3.forceManyBody()
             .strength(d => {
+                if (d._hidden) return 0;
                 if (territoryEnabled) return -5;
                 if (d.id === focalId) return -500;
                 return chargeMap[d.label] || -80;
@@ -757,7 +806,7 @@ async function renderEgo(data) {
                 if (e.type !== 'CONTRADICE') return;
                 const s = typeof e.source === 'object' ? e.source : nodes.find(n => n.id === e.source);
                 const t = typeof e.target === 'object' ? e.target : nodes.find(n => n.id === e.target);
-                if (!s || !t) return;
+                if (!s || !t || s._hidden || t._hidden) return;
                 const dx = t.x - s.x, dy = t.y - s.y;
                 const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                 const force = 5000 / (dist * dist);
@@ -768,7 +817,18 @@ async function renderEgo(data) {
             });
         }))
         .force('center', territoryEnabled ? null : d3.forceCenter(cx, cy).strength(0.02))
-        .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + (territoryEnabled ? 12 : 4)))
+        .force('collapse-hidden', alpha => {
+            // Pull hidden nodes toward focal center so they don't take layout space
+            const focal = nodes.find(n => n.id === focalId);
+            if (!focal) return;
+            const fx = focal.x || cx, fy = focal.y || cy;
+            nodes.forEach(n => {
+                if (!n._hidden) return;
+                n.vx += (fx - n.x) * 0.3;
+                n.vy += (fy - n.y) * 0.3;
+            });
+        })
+        .force('collision', d3.forceCollide().radius(d => d._hidden ? 0 : nodeRadius(d) + (territoryEnabled ? 12 : 4)))
         .force('geo-anchor', (territoryEnabled && _mapProjection && _geoCentroids) ? (alpha => {
             nodes.forEach(n => {
                 if (!n._geo) return;
@@ -864,10 +924,10 @@ function setView(view) {
 // Typography rules by entity type
 const TITLE_STYLE = {
     Person:       { transform: 'none', fontWeight: 400, fontStyle: 'normal',  fontSize: 14, font: 'serif' },
-    Location:     { transform: 'none', fontWeight: 400, fontStyle: 'normal',  fontSize: 12, font: 'sans' },
+    Location:     { transform: 'uppercase', fontWeight: 500, fontStyle: 'normal',  fontSize: 12, font: 'sans', letterSpacing: '.2ex' },
     Organization: { transform: 'none', fontWeight: 400, fontStyle: 'normal',  fontSize: 12, font: 'sans' },
     Object:       { transform: 'none', fontWeight: 400, fontStyle: 'italic',  fontSize: 12, font: 'sans' },
-    Event:        { transform: 'none', fontWeight: 400, fontStyle: 'italic',  fontSize: 14, font: 'sans' }
+    Event:        { transform: 'none', fontWeight: 400, fontStyle: 'normal',  fontSize: 14, font: 'serif' }
 };
 
 async function renderTitles(data) {
@@ -906,8 +966,8 @@ async function renderTitles(data) {
         _zoomK = e.transform.k;
     }));
 
-    const nodes = data.nodes;
-    const edges = data.edges;
+    let nodes = data.nodes;
+    let edges = data.edges;
 
     // Connection counts
     const connCount = {};
@@ -920,13 +980,40 @@ async function renderTitles(data) {
     // Geo-resolve nodes for territorial positioning
     if (territoryEnabled && _geoCentroids) geoResolve(nodes, edges);
 
-    // Show nodes up to current degree + date filter
+    // Show nodes up to current degree + date filter + adaptive cap
     const dateFilter = (typeof Timeline !== 'undefined') ? Timeline.getVisibleDateIds() : null;
-    const visibleNodes = nodes.filter(n => {
+    const NODE_CAP = { 1: 25, 2: 60, 3: Infinity };
+    const cap = NODE_CAP[currentDegree] || 25;
+
+    // Filter by degree and date first
+    let candidates = nodes.filter(n => {
+        if (n.id === focalId) return true;
         if (n._degree > currentDegree) return false;
         if (dateFilter && n.label === 'Evento' && n.date && n.date !== 'null' && !dateFilter.has(n.id)) return false;
         return true;
     });
+
+    // If over cap, keep focal + top N by connection count
+    if (candidates.length > cap + 1) {
+        const focal = candidates.filter(n => n.id === focalId);
+        const rest = candidates.filter(n => n.id !== focalId)
+            .sort((a, b) => (b._connectionCount || 0) - (a._connectionCount || 0))
+            .slice(0, cap);
+        candidates = [...focal, ...rest];
+    }
+    const visibleNodes = candidates;
+    const visibleIds = new Set(visibleNodes.map(n => n.id));
+
+    // Filter edges to only those connecting visible nodes
+    const visibleEdges = edges.filter(e => {
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        return visibleIds.has(s) && visibleIds.has(t);
+    });
+
+    // Use filtered sets for simulation
+    nodes = visibleNodes;
+    edges = visibleEdges;
 
     // Pin focal (skip in panorama — all nodes float free)
     const isFocal = panoramaMode ? (id => focalIds.has(id)) : (id => id === focalId);
@@ -993,7 +1080,7 @@ async function renderTitles(data) {
         .call(makeDrag());
 
     // Max width for text wrapping (pixels)
-    const MAX_TEXT_WIDTH = 240;
+    const MAX_TEXT_WIDTH = 336;
 
     // Helper: wrap text into lines
     function wrapText(text, maxWidth, fontSize) {
@@ -1032,6 +1119,7 @@ async function renderTitles(data) {
             const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
             return style.font === 'serif' ? 'Alegreya, Georgia, serif' : 'Alegreya Sans, system-ui, sans-serif';
         })
+        .attr('letter-spacing', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).letterSpacing || null)
         .attr('fill', d => {
             if (isFocal(d.id)) return themeVar('--graph-label-focal');
             return nodeColor(d);
@@ -1052,7 +1140,7 @@ async function renderTitles(data) {
         const fontSize = parseFloat(el.attr('font-size'));
         const maxW = MAX_TEXT_WIDTH;
         const lines = wrapText(displayName, maxW, fontSize);
-        const lineH = fontSize * 1.25;
+        const lineH = fontSize * 1.16;
         const startY = -(lines.length - 1) * lineH / 2;
 
         el.selectAll('tspan').remove();
@@ -1088,7 +1176,7 @@ async function renderTitles(data) {
     if (titleDefs.select('#title-blur').empty()) {
         const filter = titleDefs.append('filter').attr('id', 'title-blur')
             .attr('x', '-50%').attr('y', '-50%').attr('width', '200%').attr('height', '200%');
-        filter.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', '4');
+        filter.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', '8');
     }
 
     // Diffuse background rects
@@ -1098,10 +1186,10 @@ async function renderTitles(data) {
         .join('rect')
         .attr('rx', 3).attr('ry', 3)
         .attr('fill', bgTheme)
-        .attr('opacity', 0.85)
+        .attr('opacity', 0.8)
         .attr('filter', 'url(#title-blur)')
-        .attr('width', d => (d._bboxW || 48) + 16)
-        .attr('height', d => (d._bboxH || 14) + 8)
+        .attr('width', d => (d._bboxW || 48) + 24)
+        .attr('height', d => (d._bboxH || 14) + 16)
         .attr('pointer-events', 'none');
 
     // Tooltip — shows date for events, positioned top-left of the text box
@@ -1227,21 +1315,53 @@ async function renderTitles(data) {
         return `M${sx},${sy} Q${mx},${my} ${tx},${ty}`;
     }
 
+    // Panorama: arrange focal events in a circle, actors pulled toward their events
+    const panoramaRadius = panoramaMode ? Math.min(width, height) * 0.38 : 0;
+
     // Simulation — slower alpha decay for better collision resolution
     simulation = d3.forceSimulation(nodes)
-        .alphaDecay(0.015)
-        .velocityDecay(0.35)
+        .alphaDecay(0.02)
+        .velocityDecay(0.55)
         .force('link', d3.forceLink(edges).id(d => d.id)
-            .distance(d => (edgeVisual(d.type).force_distance || 100) * (panoramaMode ? 0.8 : 1.4))
-            .strength(panoramaMode ? 0.5 : 0.25))
-        .force('charge', d3.forceManyBody().strength(panoramaMode ? -80 : -120))
-        .force('center', (territoryEnabled ? null : d3.forceCenter(cx, cy).strength(panoramaMode ? 0.2 : 0.01)))
+            .distance(d => (edgeVisual(d.type).force_distance || 100) * (panoramaMode ? 0.6 : 1.4))
+            .strength(panoramaMode ? 0.4 : 0.25))
+        .force('charge', d3.forceManyBody().strength(d => d._hidden ? 0 : (panoramaMode ? -60 : -120)))
+        .force('center', (territoryEnabled ? null : d3.forceCenter(cx, cy).strength(panoramaMode ? 0.03 : 0.01)))
+        .force('collapse-hidden', alpha => {
+            nodes.forEach(n => {
+                if (!n._hidden) return;
+                n.vx += (cx - n.x) * 0.3;
+                n.vy += (cy - n.y) * 0.3;
+            });
+        })
         .force('rectCollide', forceRectCollide())
+        .force('panorama-circle', panoramaMode ? (alpha => {
+            // Focal events arranged on a circle
+            const focalArr = nodes.filter(n => focalIds.has(n.id));
+            const nFocal = focalArr.length || 1;
+            let i = 0;
+            for (const n of focalArr) {
+                const angle = (2 * Math.PI * i) / nFocal - Math.PI / 2;
+                const tx = cx + Math.cos(angle) * panoramaRadius;
+                const ty = cy + Math.sin(angle) * panoramaRadius;
+                const s = 0.12 + 0.2 * alpha;
+                n.vx += (tx - n.x) * s;
+                n.vy += (ty - n.y) * s;
+                i++;
+            }
+            // Non-focal (actors) pulled toward the circle perimeter near their linked events
+            for (const n of nodes) {
+                if (focalIds.has(n.id)) continue;
+                const s = 0.04 * alpha;
+                n.vx += (cx - n.x) * s;
+                n.vy += (cy - n.y) * s;
+            }
+        }) : null)
         .force('geo-anchor', (territoryEnabled && _mapProjection && _geoCentroids) ? (alpha => {
             nodes.forEach(n => {
                 if (!n._geo) return;
                 const [tx, ty] = _mapProjection([n._geo.lon, n._geo.lat]);
-                const strength = 0.3 + 0.7 * alpha;
+                const strength = 0.08 + 0.15 * alpha;
                 n.vx += (tx - n.x) * strength;
                 n.vy += (ty - n.y) * strength;
             });
@@ -1263,10 +1383,10 @@ async function renderTitles(data) {
             // Semantic zoom: text stays same screen size regardless of map zoom
             node.attr('transform', d => `translate(${d.x},${d.y}) scale(${1/_zoomK})`);
             bgGroup.selectAll('rect')
-                .attr('x', d => d.x - 8 / _zoomK)
-                .attr('y', d => d.y - ((d._bboxH || 14) + 8) / (2 * _zoomK))
-                .attr('width', d => ((d._bboxW || 48) + 16) / _zoomK)
-                .attr('height', d => ((d._bboxH || 14) + 8) / _zoomK);
+                .attr('x', d => d.x - 12 / _zoomK)
+                .attr('y', d => d.y - ((d._bboxH || 14) + 16) / (2 * _zoomK))
+                .attr('width', d => ((d._bboxW || 48) + 24) / _zoomK)
+                .attr('height', d => ((d._bboxH || 14) + 16) / _zoomK);
         });
 
     // Only auto-zoom when there's no geo-anchor (map IS the frame when geo is active)
@@ -2027,6 +2147,9 @@ function renderDetail(node) {
         <button class="action-btn" onclick="searchRelatedNews('${safeName}')">
             <i data-feather="search"></i> ${t('searchRelatedNews')}
         </button>
+        <button class="action-btn" id="translateBtn" onclick="translateNode('${node.id}')">
+            <i data-feather="globe"></i> ${t('detail.translate') || 'Traducir'}
+        </button>
         ${label === 'Actor' ? `<button class="action-btn" id="enrichBtn" onclick="enrichNode('${node.id}', '${safeName}')">
             <i data-feather="globe"></i> ${t('detail.enrich')}
         </button>` : ''}
@@ -2252,6 +2375,42 @@ async function searchRelatedNews(query) {
     // Switch to feed tab and search web
     switchRightTab('feed');
     searchWebNews(query);
+}
+
+async function translateNode(nodeId) {
+    const btn = document.getElementById('translateBtn');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = `<span class="pulse-dot"></span> ${t('detail.translating') || 'Traduciendo...'}`;
+
+    try {
+        const res = await fetch(`${API}/api/node/translate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: nodeId, lang: currentLang })
+        });
+        const data = await res.json();
+        if (data.ok && data.translated) {
+            // Update in-memory node data
+            const node = lastEgoData?.nodes?.find(n => n.id === nodeId);
+            if (node) {
+                if (data.translated.name) node.name = data.translated.name;
+                if (data.translated.description) node.description = data.translated.description;
+                if (data.translated.evidence_quote) node.evidence_quote = data.translated.evidence_quote;
+                showDetail(node);
+            }
+            // Re-render graph titles
+            if (currentView === 'titles' && lastEgoData) renderTitles(lastEgoData);
+        } else {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+        }
+    } catch (e) {
+        console.error('Translation failed:', e);
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+    }
 }
 
 async function reprocessNode(nodeId) {
@@ -2494,10 +2653,14 @@ function setupSearch() {
                 </li>`
             ).join('');
 
-            // Always offer web search at the bottom
+            // Always offer web search + create node at the bottom
             html += `<li class="search-web-option" onclick="searchWebNews('${esc(q)}')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                 ${t('searchWeb')} "<strong>${q}</strong>"
+            </li>`;
+            html += `<li class="search-create-option" onclick="openCreateNodeModal('${esc(q)}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                ${t('createNode')} "<strong>${q}</strong>"
             </li>`;
 
             results.innerHTML = html;
@@ -2573,6 +2736,93 @@ async function ingestFromWeb(btn, title, link, source, pubDate) {
     btn.innerHTML = '<span class="pulse-dot"></span>';
     // Pass focalId so the backend guarantees a link back to the origin node
     streamProcessNews({ title, link, source, description: '', contextNodeId: focalId || null }, btn);
+}
+
+// --- Create Node Modal ---
+
+function openCreateNodeModal(prefill) {
+    document.getElementById('searchResults').hidden = true;
+    document.getElementById('searchInput').value = '';
+
+    // Remove existing modal
+    let modal = document.getElementById('createNodeModal');
+    if (modal) modal.remove();
+
+    const nodeTypes = [
+        { value: 'Person', label: 'Actor' },
+        { value: 'Organization', label: tType('Organization') },
+        { value: 'Location', label: tType('Location') },
+        { value: 'Object', label: tType('Object') },
+        { value: 'Event', label: tType('Event') }
+    ];
+    modal = document.createElement('div');
+    modal.id = 'createNodeModal';
+    modal.className = 'create-node-modal-overlay';
+    modal.innerHTML = `
+        <div class="create-node-modal">
+            <h3>${t('createNode.title')}</h3>
+            <label>${t('createNode.name')}</label>
+            <input type="text" id="createNodeName" value="${prefill.replace(/"/g, '&quot;')}" autofocus>
+            <div class="create-node-row">
+                <div class="create-node-field">
+                    <label>${t('createNode.lang')}</label>
+                    <select id="createNodeLang">
+                        <option value="es" ${currentLang === 'es' ? 'selected' : ''}>ES</option>
+                        <option value="en" ${currentLang === 'en' ? 'selected' : ''}>EN</option>
+                    </select>
+                </div>
+                <div class="create-node-field">
+                    <label>${t('createNode.type')}</label>
+                    <select id="createNodeType">
+                        ${nodeTypes.map(tp => `<option value="${tp.value}">${tp.label}</option>`).join('')}
+                    </select>
+                </div>
+            </div>
+            <div class="create-node-actions">
+                <button class="action-btn" onclick="closeCreateNodeModal()">${t('createNode.cancel')}</button>
+                <button class="action-btn primary" id="createNodeSubmit" onclick="submitCreateNode()">${t('createNode.create')}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) closeCreateNodeModal(); });
+    document.getElementById('createNodeName').focus();
+    document.getElementById('createNodeName').addEventListener('keydown', e => {
+        if (e.key === 'Enter') submitCreateNode();
+        if (e.key === 'Escape') closeCreateNodeModal();
+    });
+}
+
+function closeCreateNodeModal() {
+    const modal = document.getElementById('createNodeModal');
+    if (modal) modal.remove();
+}
+
+async function submitCreateNode() {
+    const name = document.getElementById('createNodeName').value.trim();
+    if (!name) return;
+    const lang = document.getElementById('createNodeLang').value;
+    const type = document.getElementById('createNodeType').value;
+    const btn = document.getElementById('createNodeSubmit');
+    btn.disabled = true;
+    btn.textContent = '...';
+
+    try {
+        const res = await fetch(`${API}/api/node/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, type, lang })
+        });
+        const data = await res.json();
+        closeCreateNodeModal();
+        if (data.ok && data.id) {
+            navigateTo(data.id, true);
+        }
+    } catch (e) {
+        console.error('Create node failed:', e);
+        btn.disabled = false;
+        btn.textContent = t('createNode.create');
+    }
 }
 
 // --- Split handle ---

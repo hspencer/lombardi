@@ -385,6 +385,99 @@ async function handleAPI(req, res) {
         return;
     }
 
+    // === NODE TRANSLATE: translate name + description via LLM ===
+    if (url.pathname === '/api/node/translate' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { id, lang } = body;
+        if (!id || !lang) { res.writeHead(400); res.end('{"error":"id and lang required"}'); return; }
+
+        // Fetch current node
+        const rows = await ageQuery(`MATCH (n {id: '${esc(id)}'}) RETURN n`);
+        if (!rows.length) { res.writeHead(404); res.end('{"error":"node not found"}'); return; }
+        const node = flat(rows[0]);
+
+        const apiKey = process.env.CLAUDE_API_KEY;
+        if (!apiKey) { res.writeHead(500); res.end('{"error":"no API key configured"}'); return; }
+
+        const targetLang = lang === 'es' ? 'Spanish' : 'English';
+        const fields = { name: node.name || '', description: node.description || '' };
+        if (node.evidence_quote) fields.evidence_quote = node.evidence_quote;
+
+        const llmRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: 'claude-haiku-4-5-20251001',
+                max_tokens: 512,
+                messages: [{ role: 'user', content:
+                    `Translate the following JSON values to ${targetLang}. Keep proper nouns unchanged. Return ONLY valid JSON with the same keys.\n\n${JSON.stringify(fields)}`
+                }]
+            })
+        });
+        const llmData = await llmRes.json();
+        const text = (llmData.content?.[0]?.text || '').trim();
+        let translated;
+        try {
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            translated = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        } catch(e) { translated = null; }
+
+        if (!translated) { res.writeHead(500); res.end('{"error":"translation failed"}'); return; }
+
+        // Update node in graph
+        const sets = [];
+        if (translated.name) sets.push(`n.name = '${esc(translated.name)}'`);
+        if (translated.description) sets.push(`n.description = '${esc(translated.description)}'`);
+        if (translated.evidence_quote) sets.push(`n.evidence_quote = '${esc(translated.evidence_quote)}'`);
+        if (sets.length) await ageQuery(`MATCH (n {id: '${esc(id)}'}) SET ${sets.join(', ')} RETURN n`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, translated }));
+        return;
+    }
+
+    // === NODE CREATE: create a new node ===
+    if (url.pathname === '/api/node/create' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { name, type, lang } = body;
+        if (!name) { res.writeHead(400); res.end('{"error":"name required"}'); return; }
+
+        const id = kebab(name);
+        const label = (type === 'Event' || type === 'Evento') ? 'Evento' : 'Actor';
+        const nodeType = type || 'Person';
+
+        const client = await pool.connect();
+        try {
+            await client.query("LOAD 'age'");
+            await client.query("SET search_path = ag_catalog, '$user', public");
+            await client.query(`
+                SELECT * FROM cypher('lombardi', $$
+                    MERGE (n:${label} {id: '${esc(id)}'})
+                    SET n.name = '${esc(name)}', n.type = '${esc(nodeType)}', n.lang = '${esc(lang || 'es')}'
+                    RETURN n
+                $$) as (n agtype)
+            `);
+        } finally {
+            client.release();
+        }
+
+        // Also register in aliases.json
+        const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+        if (!aliasData.entities[id]) {
+            aliasData.entities[id] = { canonical: name, type: nodeType, aliases: [] };
+            aliasData.updated_at = new Date().toISOString().slice(0, 10);
+            fs.writeFileSync(ALIASES_PATH, JSON.stringify(aliasData, null, 2));
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, id, name, type: nodeType, label }));
+        return;
+    }
+
     // === NODE ALIASES: listar aliases de un nodo ===
     if (url.pathname === '/api/node/aliases' && req.method === 'GET') {
         const id = url.searchParams.get('id');
