@@ -6,6 +6,7 @@ let svg, g, linkGroup, nodeGroup;
 let focalId = null;
 let focalIds = new Set(); // panorama mode: multiple focal events
 let panoramaMode = false;
+let disputeMode = false;
 let history = []; // breadcrumbs
 let currentView = 'titles'; // 'nodes' | 'titles'
 let territoryEnabled = false;
@@ -155,7 +156,7 @@ async function init() {
     loadStats();
     setupSearch();
     setupSplitHandle();
-    setupDetailClose();
+    // Detail close button removed — sidebar-level control instead
     // Preload geo data for map backdrop
     await loadGeoData();
     // Landing: random focal
@@ -191,6 +192,8 @@ function applyStaticI18n() {
     document.getElementById('feedSortDate').textContent = t('feed.sort.date');
     document.getElementById('feedSortRelevance').textContent = t('feed.sort.relevance');
     document.getElementById('loadMoreBtn').textContent = t('feed.loadMore');
+    // Dispute suffix
+    document.getElementById('disputeSuffix').textContent = currentLang === 'es' ? 'sputa' : 'spute';
     // Process panel
     document.getElementById('processPanelTitle').textContent = t('process.title');
     document.getElementById('fetchRssLabel').textContent = t('process.fetch');
@@ -384,9 +387,13 @@ async function navigateTo(id, resetBreadcrumb) {
         return;
     }
 
-    // Exit panorama on specific node navigation
+    // Exit panorama/dispute on specific node navigation
     panoramaMode = false;
     focalIds = new Set();
+    if (disputeMode) {
+        disputeMode = false;
+        document.getElementById('disputeSuffix').classList.remove('active');
+    }
 
     const previousFocalId = focalId;
     const base = `${API}/api/ego?id=${encodeURIComponent(id)}`;
@@ -895,6 +902,50 @@ function autoZoom(nodes, zoomBehavior, width, height) {
         zoomBehavior.transform,
         d3.zoomIdentity.translate(tx, ty).scale(scale)
     );
+}
+
+// --- Dispute mode ---
+
+async function toggleDispute() {
+    disputeMode = !disputeMode;
+    const suffix = document.getElementById('disputeSuffix');
+    const plus = document.getElementById('disputeDot');
+    suffix.classList.toggle('active', disputeMode);
+    plus.classList.toggle('hidden', disputeMode);
+    suffix.onclick = disputeMode ? () => toggleDispute() : null;
+
+    if (disputeMode) {
+        // Fetch dispute subgraph
+        panoramaMode = true;
+        focalId = null;
+        history = [];
+        renderBreadcrumbs();
+        try {
+            const res = await fetch(`${API}/api/disputes`);
+            const data = await res.json();
+            if (!data.nodes || !data.nodes.length) {
+                disputeMode = false;
+                suffix.classList.remove('active');
+                plus.classList.remove('hidden');
+                panoramaMode = false;
+                return;
+            }
+            focalIds = new Set(data.focalIds || []);
+            lastEgoData = data;
+            renderTitles(data);
+        } catch (e) {
+            console.error('Dispute fetch failed:', e);
+            disputeMode = false;
+            suffix.classList.remove('active');
+            plus.classList.remove('hidden');
+            panoramaMode = false;
+        }
+    } else {
+        // Return to panorama home
+        panoramaMode = false;
+        focalIds = new Set();
+        navigateTo(null);
+    }
 }
 
 // --- View switching ---
@@ -2866,12 +2917,7 @@ function setupSplitHandle() {
 
 // --- Detail close ---
 
-function setupDetailClose() {
-    document.getElementById('detailClose').addEventListener('click', () => {
-        document.getElementById('detailContent').hidden = true;
-        document.querySelector('.detail-empty').hidden = false;
-    });
-}
+// Detail close button removed — closing is at sidebar level
 
 // --- Stats ---
 

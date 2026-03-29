@@ -84,6 +84,84 @@ async function ageQuery2(cypher, cols) {
 async function handleAPI(req, res) {
     const url = new URL(req.url, `http://localhost:${PORT}`);
 
+    // === DISPUTES: all disputed nodes + contradiction edges + connected actors ===
+    if (url.pathname === '/api/disputes') {
+        const nodeMap = new Map();
+        const edgeList = [];
+
+        // 1. Disputed events/claims
+        const disputed = await ageQuery(
+            `MATCH (n) WHERE n.is_disputed = true RETURN n`
+        ).catch(() => []);
+
+        for (const v of disputed) {
+            const n = flat(v);
+            n.type = n.type || (n.label === 'Evento' ? 'Event' : n.label);
+            n._degree = 0;
+            nodeMap.set(n.id, n);
+        }
+
+        // 2. CONTRADICE / DESMIENTE edges + their endpoints
+        const contradictions = await ageQuery(
+            `MATCH (a)-[r]->(b) WHERE type(r) = 'CONTRADICE' OR type(r) = 'DESMIENTE' RETURN a, r, b`
+        ).catch(() => []);
+
+        for (const row of contradictions) {
+            const a = flat(row[0] || row);
+            const r = row[1]?.properties || {};
+            const b = flat(row[2] || {});
+            const rtype = row[1]?.label || 'CONTRADICE';
+
+            if (a.id && !nodeMap.has(a.id)) {
+                a._degree = 0;
+                a.type = a.type || (a.label === 'Evento' ? 'Event' : a.label);
+                nodeMap.set(a.id, a);
+            }
+            if (b.id && !nodeMap.has(b.id)) {
+                b._degree = 0;
+                b.type = b.type || (b.label === 'Evento' ? 'Event' : b.label);
+                nodeMap.set(b.id, b);
+            }
+            if (a.id && b.id) {
+                edgeList.push({ source: a.id, target: b.id, type: rtype, ...r });
+            }
+        }
+
+        // 3. Actors connected to disputed nodes
+        const disputedIds = Array.from(nodeMap.keys()).map(id => `'${esc(id)}'`).join(',');
+        if (disputedIds.length > 0) {
+            const actors = await ageQuery(
+                `MATCH (a:Actor)-[r]-(n) WHERE n.id IN [${disputedIds}] RETURN a, r, n`
+            ).catch(() => []);
+
+            for (const row of actors) {
+                const a = flat(row[0] || row);
+                const r = row[1]?.properties || {};
+                const n = row[2] || {};
+                const rtype = row[1]?.label || 'PARTICIPA';
+
+                if (a.id && !nodeMap.has(a.id)) {
+                    a._degree = 1;
+                    a.type = a.type || 'Person';
+                    nodeMap.set(a.id, a);
+                }
+                const nid = n.properties?.id || n.id;
+                if (a.id && nid) {
+                    edgeList.push({ source: a.id, target: nid, type: rtype, ...r });
+                }
+            }
+        }
+
+        const focalIds = disputed.map(v => flat(v).id).filter(Boolean);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            nodes: Array.from(nodeMap.values()),
+            edges: edgeList,
+            focalIds
+        }));
+        return;
+    }
+
     // === PANORAMA: N eventos recientes + actores + aristas ===
     if (url.pathname === '/api/panorama') {
         const limit = Math.min(20, Math.max(1, parseInt(url.searchParams.get('limit') || '10')));

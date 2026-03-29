@@ -436,6 +436,44 @@
       "canonical": "Herbert Spencer",
       "type": "[object Object]",
       "aliases": []
+    },
+    "volodymyr-zelenskyy": {
+      "canonical": "Volodymyr Zelenskyy",
+      "type": "Person",
+      "aliases": [
+        "zelensky-1",
+        "zelenskyy-volodymyr",
+        "zelensky-volodymyr",
+        "zelensky-kiev",
+        "volodymyr-zelenskyj",
+        "selenskyj"
+      ]
+    },
+    "idf": {
+      "canonical": "IDF (Fuerzas de Defensa de Israel)",
+      "type": "Organization",
+      "aliases": [
+        "idf-soldados",
+        "israel-idf",
+        "idf-israel"
+      ]
+    },
+    "terroristas-de-donbas": {
+      "canonical": "Terroristas de Donbás",
+      "type": "Organization",
+      "aliases": [
+        "donbas-terroristas"
+      ]
+    },
+    "encarcelamiento-cientifico-artico-rusia": {
+      "aliases": [
+        "russia-scientist-imprisonment"
+      ]
+    },
+    "abusador-online-encontrado": {
+      "aliases": [
+        "actriz-deepfakes-germania"
+      ]
     }
   }
 }

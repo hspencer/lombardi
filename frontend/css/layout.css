@@ -28,9 +28,45 @@ body {
     font-weight: 400;
     letter-spacing: 0.5px;
     white-space: nowrap;
+    display: flex;
+    align-items: baseline;
 }
 
 .shell-header h1 strong { font-weight: 400; }
+
+/* Lombardispute animation */
+.dispute-suffix {
+    color: var(--node-evento, #C45D3E);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
+    font-size: inherit;
+    letter-spacing: inherit;
+    display: none;
+}
+.dispute-suffix.active {
+    display: inline;
+    cursor: pointer;
+}
+.dispute-suffix.active:hover {
+    text-decoration: underline;
+}
+/* Dispute trigger plus */
+.dispute-plus {
+    color: var(--node-evento, #C45D3E);
+    font-family: inherit;
+    font-weight: inherit;
+    font-style: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+.dispute-plus:hover {
+    opacity: 0.7;
+}
+.dispute-plus.hidden {
+    display: none;
+}
 
 .header-controls {
     display: flex;

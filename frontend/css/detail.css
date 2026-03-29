@@ -201,26 +201,11 @@
     position: relative;
 }
 
-.detail-close {
-    position: absolute;
-    top: var(--space-md);
-    right: var(--space-md);
-    background: none;
-    border: none;
-    color: var(--ink-muted);
-    font-size: 20px;
-    cursor: pointer;
-    line-height: 1;
-}
-
-.detail-close:hover { color: var(--ink-primary); }
-
 .detail-content h2 {
     font-family: var(--font-serif);
     font-size: 2em;
     font-weight: 300;
     margin-bottom: var(--space-md);
-    padding-right: var(--space-lg);
 }
 
 /* --- Tags --- */
