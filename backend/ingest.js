@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 // --- Config ---
@@ -116,9 +117,12 @@ async function initDB() {
             CREATE TABLE IF NOT EXISTS news_raw (
                 id SERIAL PRIMARY KEY, source_name TEXT, source_lang TEXT, source_region TEXT,
                 title TEXT, link TEXT UNIQUE, description TEXT, pub_date TEXT,
-                ingested_at TIMESTAMPTZ DEFAULT NOW(), processed BOOLEAN DEFAULT FALSE
+                ingested_at TIMESTAMPTZ DEFAULT NOW(), processed BOOLEAN DEFAULT FALSE,
+                content_hash TEXT
             )
         `);
+        await client.query(`ALTER TABLE news_raw ADD COLUMN IF NOT EXISTS content_hash TEXT`).catch(() => {});
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_news_content_hash ON news_raw(content_hash)`).catch(() => {});
         await client.query("LOAD 'age'");
         await client.query("SET search_path = ag_catalog, public");
         // Ensure graph exists
@@ -206,7 +210,8 @@ async function writeToGraph(client, newsItem, extraction) {
                     e.is_disputed = ${evt.is_disputed || false},
                     e.evidence_quote = '${esc(evt.evidence_quote || '')}',
                     e.source = '${esc(newsItem.source_name)}',
-                    e.source_url = '${esc(newsItem.link)}'
+                    e.source_url = '${esc(newsItem.link)}',
+                    e.extraction_confidence = ${parseFloat(evt.extraction_confidence) || 0}
                 RETURN e
             $$) as (e agtype)
         `);
@@ -228,12 +233,13 @@ async function writeToGraph(client, newsItem, extraction) {
                 $$) as (a agtype)
             `);
 
-            // PARTICIPA edge with role as metadata
+            // PARTICIPA edge with role + impact_direction
             await client.query(`
                 SELECT * FROM cypher('lombardi', $$
                     MATCH (a:Actor {id: '${esc(actor.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
                     MERGE (a)-[r:PARTICIPA]->(e)
-                    SET r.role = '${esc(actor.role || '')}'
+                    SET r.role = '${esc(actor.role || '')}',
+                        r.impact_direction = '${esc(actor.impact_direction || 'neutral')}'
                     RETURN a, e
                 $$) as (a agtype, e agtype)
             `);
@@ -289,12 +295,15 @@ async function processFile(filePath) {
         // Write to SQL (before LOAD 'age')
         const client = await pool.connect();
         try {
+            const contentHash = crypto.createHash('sha256')
+                .update(newsItem.description || newsItem.title || '')
+                .digest('hex');
             await client.query(`
-                INSERT INTO public.news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, true)
-                ON CONFLICT (link) DO UPDATE SET processed = true
+                INSERT INTO public.news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed, content_hash)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8)
+                ON CONFLICT (link) DO UPDATE SET processed = true, content_hash = EXCLUDED.content_hash
             `, [newsItem.source_name, newsItem.source_lang, newsItem.source_region || '',
-                newsItem.title, newsItem.link, newsItem.description, newsItem.pub_date]);
+                newsItem.title, newsItem.link, newsItem.description, newsItem.pub_date, contentHash]);
 
             // Write to graph
             await client.query("LOAD 'age'");

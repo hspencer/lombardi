@@ -8,6 +8,7 @@ const TRANSLATIONS = {
         // Toolbar
         'toolbar.nodes': 'Nodos',
         'toolbar.titles': 'Títulos',
+        'toolbar.territory': 'Territorio',
         'toolbar.degree': 'Grado',
 
         // Tabs
@@ -86,22 +87,6 @@ const TRANSLATIONS = {
         'merge.confirm': 'Fusionar',
         'merge.cancel': 'Cancelar',
 
-        // Node types
-        'type.Person': 'Persona',
-        'type.Location': 'Lugar',
-        'type.Organization': 'Organización',
-        'type.Object': 'Objeto',
-        'type.Event': 'Evento',
-
-        // Edge types
-        'edge.PARTICIPA': 'Participa',
-        'edge.CAUSA': 'Causa',
-        'edge.CONTRADICE': 'Contradice',
-        'edge.COMPLEMENTA': 'Complementa',
-        'edge.PERTENECE_A': 'Pertenece a',
-        'edge.UBICADO_EN': 'Ubicado en',
-        'edge.RELACIONADO': 'Relacionado',
-
         // Ingest status
         'ingest.status.pending': 'Pendientes',
         'ingest.status.processed': 'Procesadas',
@@ -151,6 +136,7 @@ const TRANSLATIONS = {
 
         'toolbar.nodes': 'Nodes',
         'toolbar.titles': 'Titles',
+        'toolbar.territory': 'Territory',
         'toolbar.degree': 'Degree',
 
         'tab.node': 'Node',
@@ -223,20 +209,6 @@ const TRANSLATIONS = {
         'merge.confirm': 'Merge',
         'merge.cancel': 'Cancel',
 
-        'type.Person': 'Person',
-        'type.Location': 'Location',
-        'type.Organization': 'Organization',
-        'type.Object': 'Object',
-        'type.Event': 'Event',
-
-        'edge.PARTICIPA': 'Participates',
-        'edge.CAUSA': 'Causes',
-        'edge.CONTRADICE': 'Contradicts',
-        'edge.COMPLEMENTA': 'Complements',
-        'edge.PERTENECE_A': 'Belongs to',
-        'edge.UBICADO_EN': 'Located in',
-        'edge.RELACIONADO': 'Related',
-
         'ingest.status.pending': 'Pending',
         'ingest.status.processed': 'Processed',
         'ingest.status.extractions': 'Extractions',
@@ -273,6 +245,13 @@ const TRANSLATIONS = {
     }
 };
 
+// Schema-driven i18n bridge
+let _schemaData = null;
+
+function setSchemaData(schema) {
+    _schemaData = schema;
+}
+
 let currentLang = 'es';
 
 function detectLang() {
@@ -292,9 +271,28 @@ function t(key) {
 }
 
 function tType(type) {
-    return t(`type.${type}`) || type;
+    // Read from schema type_labels (Actor node has type_labels for Person, Organization, etc.)
+    const labels = _schemaData?.graph?.nodes?.Actor?.type_labels?.[type];
+    if (labels) return labels[currentLang] || labels.es || type;
+    // Evento node label
+    if (type === 'Event' || type === 'Evento') {
+        return _schemaData?.graph?.nodes?.Evento?.i18n?.[currentLang]?.label
+            || _schemaData?.graph?.nodes?.Evento?.i18n?.es?.label
+            || type;
+    }
+    return type;
 }
 
 function tEdge(type) {
-    return t(`edge.${type}`) || type.replace(/_/g, ' ');
+    return _schemaData?.graph?.edges?.[type]?.i18n?.[currentLang]?.label
+        || _schemaData?.graph?.edges?.[type]?.i18n?.es?.label
+        || type.replace(/_/g, ' ');
+}
+
+function tEventType(id) {
+    if (!_schemaData?.event_types) return id.replace(/_/g, ' ').toLowerCase();
+    const et = _schemaData.event_types.find(e => e.id === id);
+    if (!et) return id.replace(/_/g, ' ').toLowerCase();
+    if (currentLang === 'es') return et.label;
+    return et.i18n?.[currentLang] || et.label;
 }

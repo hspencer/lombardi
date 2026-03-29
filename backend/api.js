@@ -841,7 +841,7 @@ async function handleAPI(req, res) {
                     MATCH (a {id: '${esc(id)}'}), (b {id: '${esc(match.id)}'})
                     MERGE (a)-[r:${relType}]->(b)
                     SET r.role = 'sinónimo detectado'
-                    RETURN a, b
+                    RETURN r
                 `).catch(() => {});
                 emit('discovered', {
                     edge: { source: id, target: match.id, type: relType, role: 'sinónimo detectado' },
@@ -871,7 +871,7 @@ async function handleAPI(req, res) {
                         MATCH (a {id: '${esc(id)}'}), (b {id: '${esc(co.b.id)}'})
                         MERGE (a)-[r:COMPLEMENTA]->(b)
                         SET r.role = 'co-ocurrencia en ${co.cnt} eventos'
-                        RETURN a, b
+                        RETURN r
                     `).catch(() => {});
                     emit('discovered', {
                         edge: { source: id, target: co.b.id, type: 'COMPLEMENTA', role: `co-ocurrencia en ${co.cnt} eventos` },
@@ -1040,7 +1040,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
                         MATCH (a {id: '${esc(src)}'}), (b {id: '${esc(tgt)}'})
                         MERGE (a)-[r:${ent.relation}]->(b)
                         SET r.role = '${esc(ent.role || '')}'
-                        RETURN a, b
+                        RETURN r
                     `).catch(() => {});
 
                     emit('discovered', {
@@ -1063,7 +1063,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
                     MATCH (a {id: '${esc(rel.source)}'}), (b {id: '${esc(rel.target)}'})
                     MERGE (a)-[r:${rel.type}]->(b)
                     SET r.role = '${esc(rel.role || '')}'
-                    RETURN a, b
+                    RETURN r
                 `).catch(() => {});
 
                 // Find the target node data for the frontend
@@ -1093,7 +1093,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
     // --- Manual edge creation ---
     if (url.pathname === '/api/edge/create' && req.method === 'POST') {
         const body = JSON.parse(await readBody(req));
-        const { source, target, type, role } = body;
+        const { source, target, type, role, impact_direction, contradiction_type, tension_score } = body;
         if (!source || !target || !type) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end('{"error":"source, target, and type required"}');
@@ -1106,11 +1106,17 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
             return;
         }
         try {
+            const setParts = [];
+            if (role) setParts.push(`r.role = '${esc(role)}'`);
+            if (impact_direction) setParts.push(`r.impact_direction = '${esc(impact_direction)}'`);
+            if (contradiction_type) setParts.push(`r.contradiction_type = '${esc(contradiction_type)}'`);
+            if (tension_score != null) setParts.push(`r.tension_score = ${parseFloat(tension_score) || 0}`);
+            const setClause = setParts.length ? `SET ${setParts.join(', ')}` : '';
             await ageQuery(`
                 MATCH (a {id: '${esc(source)}'}), (b {id: '${esc(target)}'})
                 MERGE (a)-[r:${type}]->(b)
-                ${role ? `SET r.role = '${esc(role)}'` : ''}
-                RETURN a, b
+                ${setClause}
+                RETURN r
             `);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, source, target, type, role: role || '' }));

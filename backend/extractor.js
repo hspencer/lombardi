@@ -50,7 +50,8 @@ Respond with ONLY valid JSON, no markdown:
     "event_type": "EVENT_TYPE",
     "date": "YYYY-MM-DD o null",
     "is_disputed": false,
-    "evidence_quote": "cita en idioma original"
+    "evidence_quote": "cita en idioma original",
+    "extraction_confidence": 0.85
   },
   "actors": [
     {
@@ -58,13 +59,17 @@ Respond with ONLY valid JSON, no markdown:
       "name": "Nombre",
       "type": "Person|Organization|Location",
       "description": "descriptor breve en español (rol, cargo, o qué es)",
-      "role": "verbo en español que describe su participación en el evento"
+      "role": "verbo en español que describe su participación en el evento",
+      "impact_direction": "positive|negative|neutral"
     }
   ],
   "actor_relations": [
     {"source": "actor-id", "relation": "PERTENECE_A|UBICADO_EN", "target": "actor-id"}
   ]
 }
+
+extraction_confidence: Rate your confidence in the overall extraction quality from 0.0 (very uncertain) to 1.0 (very clear, unambiguous news item).
+impact_direction: For each actor, indicate if their participation has a positive, negative, or neutral impact on the event.
 
 NEWS ITEM:
 `;

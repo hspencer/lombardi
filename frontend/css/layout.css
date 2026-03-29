@@ -368,6 +368,9 @@ body {
     background: var(--border-default);
     border-radius: 4px;
     overflow: hidden;
+    font-family: var(--font-sans);
+    text-transform: uppercase;
+    letter-spacing: .2ex;
 }
 
 .degree-control {
@@ -400,7 +403,9 @@ body {
     border: none;
     padding: 4px var(--space-md);
     font-size: var(--font-size-xs);
-    font-family: var(--font-mono);
+    font-family: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
     cursor: pointer;
     transition: all var(--duration-fast) var(--ease-default);
 }

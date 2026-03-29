@@ -8,6 +8,7 @@ let focalIds = new Set(); // panorama mode: multiple focal events
 let panoramaMode = false;
 let history = []; // breadcrumbs
 let currentView = 'titles'; // 'nodes' | 'titles'
+let territoryEnabled = false;
 let currentDegree = 1;
 let lastEgoData = null; // cache for view switching
 
@@ -36,6 +37,26 @@ const MAX_LABEL_LINE = 16; // chars per line for multiline wrapping
 function trimTitle(title) {
     if (!title) return '—';
     return title.replace(/\s*[-–—]\s*[^-–—]{2,30}$/, '').trim() || title;
+}
+
+// Human-readable date formatting: "Lunes 27 de Marzo, 2026"
+function formatDate(dateStr) {
+    if (!dateStr || dateStr === 'null' || dateStr === '') return '';
+    try {
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const date = new Date(y, m - 1, d);
+        const days = currentLang === 'es'
+            ? ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado']
+            : ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        const months = currentLang === 'es'
+            ? ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+            : ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        const dayName = days[date.getDay()];
+        const monthName = months[date.getMonth()];
+        return currentLang === 'es'
+            ? `${dayName} ${d} de ${monthName}, ${y}`
+            : `${dayName} ${monthName} ${d}, ${y}`;
+    } catch { return dateStr; }
 }
 
 function typeColor(d) {
@@ -100,10 +121,13 @@ async function init() {
 
     const schemaRes = await fetch(`${API}/api/schema`);
     schemaData = await schemaRes.json();
+    setSchemaData(schemaData);
     loadStats();
     setupSearch();
     setupSplitHandle();
     setupDetailClose();
+    // Preload geo data for map backdrop
+    loadGeoData();
     // Landing: random focal
     await navigateTo(null);
 }
@@ -116,6 +140,7 @@ function applyStaticI18n() {
     document.getElementById('viewNodes').textContent = t('toolbar.nodes');
     document.getElementById('viewTitles').textContent = t('toolbar.titles');
     document.getElementById('degreeLabel').textContent = t('toolbar.degree');
+    if (typeof feather !== 'undefined') feather.replace();
     // Tabs
     document.getElementById('tabFeed').textContent = t('tab.feed');
     document.getElementById('tabNode').textContent = t('tab.node');
@@ -235,6 +260,22 @@ function applyVisibilityFilter() {
                 if (!visibleIds.has(d.id)) return 0;
                 return d._degree <= 1 ? 1 : 0;
             });
+    } else if (currentView === 'territory') {
+        // Territory view: transition labels + dim zones
+        if (nodeGroup) {
+            nodeGroup.selectAll('g')
+                .transition().duration(300)
+                .attr('visibility', d => visibleIds.has(d.id) ? 'visible' : 'hidden')
+                .style('opacity', d => visibleIds.has(d.id) ? 1 : 0);
+        }
+        // Dim arc connections
+        d3.select('#graph').selectAll('.territory-arcs path')
+            .transition().duration(300)
+            .attr('opacity', d => {
+                const sid = typeof d.source === 'object' ? d.source.id : d.source;
+                const tid = typeof d.target === 'object' ? d.target.id : d.target;
+                return visibleIds.has(sid) && visibleIds.has(tid) ? 0.3 : 0.02;
+            });
     } else {
         // Titles view: transition nodeGroup children (g elements with data)
         if (nodeGroup) {
@@ -301,7 +342,7 @@ async function navigateTo(id, resetBreadcrumb) {
                     return (s === previousFocalId && t === focalId) || (t === previousFocalId && s === focalId);
                 });
                 if (edge) {
-                    edgeLabel = edge.type.replace(/_/g, ' ').toLowerCase();
+                    edgeLabel = tEdge(edge.type).toLowerCase();
                 }
             }
 
@@ -321,7 +362,7 @@ async function navigateTo(id, resetBreadcrumb) {
 
 // --- Graph Rendering ---
 
-function renderEgo(data) {
+async function renderEgo(data) {
     const container = document.getElementById('graphPanel');
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -352,6 +393,9 @@ function renderEgo(data) {
 
     g = svg.append('g');
 
+    // Map backdrop inside g (moves with zoom/pan)
+    if (territoryEnabled) drawMapBackdrop(g, width, height);
+
     // Zoom
     const zoomBehavior = d3.zoom()
         .scaleExtent([0.3, 4])
@@ -368,6 +412,9 @@ function renderEgo(data) {
         connCount[e.target] = (connCount[e.target] || 0) + 1;
     });
     nodes.forEach(n => { n._connectionCount = connCount[n.id] || 0; });
+
+    // Geo-resolve for territorial gravity
+    if (territoryEnabled && _geoCentroids) geoResolve(nodes, edges);
 
     // Pin focal to center
     const focalNode = nodes.find(n => n.id === focalId);
@@ -405,7 +452,7 @@ function renderEgo(data) {
 
     // Edge label (visible on focal edges, shown on hover for others)
     const edgeLabel = linkG.append('text')
-        .text(d => d.type.replace(/_/g, ' ').toLowerCase())
+        .text(d => tEdge(d.type).toLowerCase())
         .attr('font-size', 10)
         .attr('font-family', 'var(--font-sans)')
         .attr('font-style', 'italic')
@@ -550,7 +597,7 @@ function renderEgo(data) {
         const name = d.name || d.predicate || d.title || d.id;
         const desc = d.description ? `<span class="tooltip-desc">${d.description}</span>` : '';
         const dateStr = (d.label === 'Evento' && d.date && d.date !== 'null' && d.date !== '')
-            ? `<span class="tooltip-date">${d.date}</span>` : '';
+            ? `<span class="tooltip-date">${formatDate(d.date)}</span>` : '';
         tooltip.innerHTML = `<strong>${name}</strong>${dateStr}${desc ? '<br>' + desc : ''}`;
         tooltip.classList.add('visible');
 
@@ -657,8 +704,15 @@ function renderEgo(data) {
         })
         .force('center', d3.forceCenter(cx, cy).strength(0.02))
         .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 4))
-        .force('type-radial', (alpha) => {
-            // Gently push nodes toward their type's angular zone
+        .force('geo-anchor', (territoryEnabled && _mapProjection && _geoCentroids) ? (alpha => {
+            nodes.forEach(n => {
+                if (!n._geo) return;
+                const [tx, ty] = _mapProjection([n._geo.lon, n._geo.lat]);
+                const strength = n.id === focalId ? 0.05 : 0.12;
+                n.vx += (tx - n.x) * strength;
+                n.vy += (ty - n.y) * strength;
+            });
+        }) : (alpha => {
             nodes.forEach(n => {
                 if (n.id === focalId || n._degree > 1) return;
                 const angle = TYPE_ANGLE[n.type] ?? 0;
@@ -667,7 +721,7 @@ function renderEgo(data) {
                 n.vx += (targetX - n.x) * alpha * 0.02;
                 n.vy += (targetY - n.y) * alpha * 0.02;
             });
-        })
+        }))
         .on('tick', () => {
             link.attr('d', linkPath);
             linkHit.attr('d', linkPath);
@@ -720,6 +774,16 @@ function autoZoom(nodes, zoomBehavior, width, height) {
 
 // --- View switching ---
 
+function toggleTerritory() {
+    territoryEnabled = !territoryEnabled;
+    document.getElementById('territoryToggle').classList.toggle('active', territoryEnabled);
+    // Re-render to apply/remove geo forces and map
+    if (lastEgoData) {
+        if (currentView === 'titles') renderTitles(lastEgoData);
+        else renderEgo(lastEgoData);
+    }
+}
+
 function setView(view) {
     currentView = view;
     document.querySelectorAll('.view-toggle').forEach(b => b.classList.remove('active'));
@@ -741,7 +805,7 @@ const TITLE_STYLE = {
     Event:        { transform: 'none', fontWeight: 400, fontStyle: 'italic',  fontSize: 14, font: 'sans' }
 };
 
-function renderTitles(data) {
+async function renderTitles(data) {
     const container = document.getElementById('graphPanel');
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -769,7 +833,13 @@ function renderTitles(data) {
     });
 
     g = svg.append('g');
-    svg.call(d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform)));
+    // Map backdrop inside g
+    if (territoryEnabled) drawMapBackdrop(g, width, height);
+    let _zoomK = 1;
+    svg.call(d3.zoom().scaleExtent([0.3, 6]).on('zoom', e => {
+        g.attr('transform', e.transform);
+        _zoomK = e.transform.k;
+    }));
 
     const nodes = data.nodes;
     const edges = data.edges;
@@ -781,6 +851,9 @@ function renderTitles(data) {
         connCount[e.target] = (connCount[e.target] || 0) + 1;
     });
     nodes.forEach(n => { n._connectionCount = connCount[n.id] || 0; });
+
+    // Geo-resolve nodes for territorial positioning
+    if (territoryEnabled && _geoCentroids) geoResolve(nodes, edges);
 
     // Show nodes up to current degree + date filter
     const dateFilter = (typeof Timeline !== 'undefined') ? Timeline.getVisibleDateIds() : null;
@@ -817,7 +890,7 @@ function renderTitles(data) {
 
     // Edge labels for focal edges
     const edgeLabel_t = linkG_t.append('text')
-        .text(d => d.type.replace(/_/g, ' ').toLowerCase())
+        .text(d => tEdge(d.type).toLowerCase())
         .attr('font-size', 9)
         .attr('font-family', 'var(--font-sans)')
         .attr('font-style', 'italic')
@@ -980,7 +1053,7 @@ function renderTitles(data) {
         const hasDesc = d.description && d.description.length > 0;
         if (hasDate || hasDesc) {
             let html = '';
-            if (hasDate) html += `<span class="tooltip-date" style="margin-left:0">${d.date}</span>`;
+            if (hasDate) html += `<span class="tooltip-date" style="margin-left:0">${formatDate(d.date)}</span>`;
             if (hasDesc) html += `${hasDate ? '<br>' : ''}<span class="tooltip-desc">${d.description}</span>`;
             tooltip_t.innerHTML = html;
             tooltip_t.classList.add('visible');
@@ -1040,7 +1113,7 @@ function renderTitles(data) {
     });
 
     // Rectangular collision force (accounts for text-anchor offset)
-    const COLLISION_PADDING = 6; // extra px between labels
+    const COLLISION_PADDING = 18; // extra px between labels — legibility first
     function forceRectCollide() {
         let nds;
         function force(alpha) {
@@ -1096,10 +1169,20 @@ function renderTitles(data) {
         .force('link', d3.forceLink(edges).id(d => d.id)
             .distance(d => (edgeVisual(d.type).force_distance || 100) * (panoramaMode ? 0.8 : 1.4))
             .strength(panoramaMode ? 0.5 : 0.25))
-        .force('charge', d3.forceManyBody().strength(panoramaMode ? -80 : -200))
-        .force('center', d3.forceCenter(cx, cy).strength(panoramaMode ? 0.2 : 0.03))
+        .force('charge', d3.forceManyBody().strength(panoramaMode ? -80 : -120))
+        .force('center', d3.forceCenter(cx, cy).strength(panoramaMode ? 0.2 : 0.01))
         .force('rectCollide', forceRectCollide())
-        .force('type-radial', panoramaMode ? null : (alpha => {
+        .force('geo-anchor', (territoryEnabled && _mapProjection && _geoCentroids) ? (alpha => {
+            nodes.forEach(n => {
+                if (!n._geo) return;
+                const [tx, ty] = _mapProjection([n._geo.lon, n._geo.lat]);
+                // Elastic anchor: nodes ARE their territory
+                // Strength 0.4+ means geography dominates, links flex around it
+                const strength = n.id === focalId ? 0.05 : 0.12;
+                n.vx += (tx - n.x) * strength;
+                n.vy += (ty - n.y) * strength;
+            });
+        }) : panoramaMode ? null : (alpha => {
             nodes.forEach(n => {
                 if (n.id === focalId || n._degree > 1) return;
                 const angle = TYPE_ANGLE[n.type] ?? 0;
@@ -1112,17 +1195,624 @@ function renderTitles(data) {
             link.attr('d', titleLinkPath);
             edgeLabel_t
                 .attr('x', d => (d.source.x + d.target.x) / 2)
-                .attr('y', d => (d.source.y + d.target.y) / 2);
-            node.attr('transform', d => `translate(${d.x},${d.y})`);
+                .attr('y', d => (d.source.y + d.target.y) / 2)
+                .attr('font-size', 9 / _zoomK);
+            // Semantic zoom: text stays same screen size regardless of map zoom
+            node.attr('transform', d => `translate(${d.x},${d.y}) scale(${1/_zoomK})`);
             bgGroup.selectAll('rect')
-                .attr('x', d => d.x - 8)
-                .attr('y', d => d.y - ((d._bboxH || 14) + 8) / 2);
+                .attr('x', d => d.x - 8 / _zoomK)
+                .attr('y', d => d.y - ((d._bboxH || 14) + 8) / (2 * _zoomK))
+                .attr('width', d => ((d._bboxW || 48) + 16) / _zoomK)
+                .attr('height', d => ((d._bboxH || 14) + 8) / _zoomK);
         });
 
-    setTimeout(() => autoZoom(nodes, d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform)), width, height), 2000);
+    // Only auto-zoom when there's no geo-anchor (map IS the frame when geo is active)
+    if (!territoryEnabled || !_mapProjection || !_geoCentroids) {
+        setTimeout(() => autoZoom(nodes, d3.zoom().scaleExtent([0.3, 4]).on('zoom', e => g.attr('transform', e.transform)), width, height), 2000);
+    }
 
     // Update timeline slider
     if (typeof Timeline !== 'undefined') Timeline.update(data);
+}
+
+// --- Persistent Map Backdrop ---
+
+let _geoCentroids = null;
+let _worldTopo = null;
+let _mapProjection = null;
+
+async function loadGeoData() {
+    if (!_geoCentroids) {
+        const r = await fetch(`${API}/data/geo-centroids.json`);
+        _geoCentroids = await r.json();
+    }
+    if (!_worldTopo) {
+        const r = await fetch(`${API}/data/world-110m.json`);
+        _worldTopo = await r.json();
+    }
+}
+
+// Renders a world map as the bottom layer inside a given <g> group.
+// Called after g is created, inserts backdrop as first child.
+// Europe + Mediterranean + Middle East: zoomed-in geopolitical center
+const EUROPE_BOUNDS = {
+    type: "Feature",
+    geometry: {
+        type: "Polygon",
+        coordinates: [[[-12, 28], [55, 28], [55, 68], [-12, 68], [-12, 28]]]
+    }
+};
+
+function drawMapBackdrop(gEl, width, height) {
+    if (!_worldTopo) return;
+
+    const worldGeo = topojson.feature(_worldTopo, _worldTopo.objects.countries);
+    const projection = d3.geoNaturalEarth1()
+        .fitSize([width, height], EUROPE_BOUNDS);
+    _mapProjection = projection;
+    const pathGen = d3.geoPath(projection);
+
+    // Insert as FIRST child of g so everything draws on top
+    const backdrop = gEl.insert('g', ':first-child').attr('class', 'map-backdrop');
+
+    const isDark = !document.documentElement.getAttribute('data-theme') || document.documentElement.getAttribute('data-theme') === 'dark';
+    const fillColor = isDark ? '#1e2230' : '#e0dcd4';
+    const strokeColor = isDark ? '#2a3040' : '#c8c0b4';
+
+    backdrop.selectAll('path')
+        .data(worldGeo.features)
+        .join('path')
+        .attr('d', pathGen)
+        .attr('fill', fillColor)
+        .attr('stroke', strokeColor)
+        .attr('stroke-width', 0.5)
+        .attr('opacity', 1);
+
+    return projection;
+}
+
+// Renders a mini-map in the detail panel showing the node's location
+function renderMiniMap(containerId, nodeData) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    if (!nodeData?._geo || !_worldTopo || !_geoCentroids) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+
+    const w = container.clientWidth || 280;
+    const h = 140;
+    const miniSvg = d3.select(container).append('svg')
+        .attr('width', w).attr('height', h)
+        .style('border-radius', '6px')
+        .style('background', themeVar('--bg-surface-alt'));
+
+    const worldGeo = topojson.feature(_worldTopo, _worldTopo.objects.countries);
+    const proj = d3.geoNaturalEarth1()
+        .fitSize([w * 0.92, h * 0.85], worldGeo)
+        .translate([w / 2, h / 2]);
+    const pathGen = d3.geoPath(proj);
+
+    const isDark = !document.documentElement.getAttribute('data-theme') || document.documentElement.getAttribute('data-theme') === 'dark';
+    miniSvg.selectAll('path')
+        .data(worldGeo.features)
+        .join('path')
+        .attr('d', pathGen)
+        .attr('fill', isDark ? '#1e2230' : '#e0dcd4')
+        .attr('stroke', isDark ? '#2a3040' : '#c8c0b4')
+        .attr('stroke-width', 0.5);
+
+    // Node position
+    const [px, py] = proj([nodeData._geo.lon, nodeData._geo.lat]);
+    const color = nodeColor(nodeData);
+
+    // Diffuse glow
+    const defs = miniSvg.append('defs');
+    const grad = defs.append('radialGradient').attr('id', 'mini-glow');
+    grad.append('stop').attr('offset', '0%').attr('stop-color', color).attr('stop-opacity', 0.4);
+    grad.append('stop').attr('offset', '100%').attr('stop-color', color).attr('stop-opacity', 0);
+    miniSvg.append('circle').attr('cx', px).attr('cy', py).attr('r', 20)
+        .attr('fill', 'url(#mini-glow)');
+    // Pin dot
+    miniSvg.append('circle').attr('cx', px).attr('cy', py).attr('r', 3)
+        .attr('fill', color).attr('stroke', themeVar('--bg-surface')).attr('stroke-width', 1);
+}
+
+function geoResolve(nodes, edges) {
+    const nameIndex = _geoCentroids.$nameIndex || {};
+
+    // Try to resolve a single node by ID, name, or name fragments
+    function lookupCentroid(n) {
+        // 1. Direct ID match
+        if (_geoCentroids[n.id]) return _geoCentroids[n.id];
+        // 2. Name index (exact match, lowercase)
+        const nameLower = (n.name || '').toLowerCase();
+        if (nameIndex[nameLower]) return _geoCentroids[nameIndex[nameLower]];
+        // 3. ID-based fuzzy: strip common prefixes/suffixes
+        const idClean = n.id.replace(/^(el-|la-|los-|las-|the-)/, '');
+        if (_geoCentroids[idClean]) return _geoCentroids[idClean];
+        // 4. Search name index keys as substrings within node name
+        for (const [alias, centroidId] of Object.entries(nameIndex)) {
+            if (alias.length >= 4 && nameLower.includes(alias)) return _geoCentroids[centroidId];
+        }
+        // 5. Search centroid keys as substrings within node ID
+        for (const key of Object.keys(_geoCentroids)) {
+            if (key.startsWith('$')) continue;
+            if (key.length >= 4 && n.id.includes(key)) return _geoCentroids[key];
+        }
+        return null;
+    }
+
+    // Build adjacency for UBICADO_EN and PERTENECE_A
+    const locOf = {};
+    edges.forEach(e => {
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        if (e.type === 'UBICADO_EN' || e.type === 'PERTENECE_A') {
+            if (!locOf[s]) locOf[s] = [];
+            locOf[s].push(t);
+        }
+    });
+
+    const nodeMap = {};
+    nodes.forEach(n => { nodeMap[n.id] = n; });
+
+    // Phase 1: Direct lookup for each node
+    nodes.forEach(n => { n._geo = lookupCentroid(n); });
+
+    // Phase 2: Walk UBICADO_EN / PERTENECE_A edges
+    nodes.forEach(n => {
+        if (n._geo) return;
+        const targets = locOf[n.id] || [];
+        for (const tid of targets) {
+            const target = nodeMap[tid];
+            if (target?._geo) { n._geo = target._geo; return; }
+            // Try resolving the target directly
+            const geo = lookupCentroid(target || { id: tid, name: tid });
+            if (geo) { n._geo = geo; return; }
+        }
+    });
+
+    // Phase 3: Events inherit from their PARTICIPA actors
+    edges.forEach(e => {
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        if (e.type === 'PARTICIPA') {
+            const actor = nodeMap[s];
+            const evento = nodeMap[t];
+            if (actor?._geo && evento && !evento._geo) {
+                evento._geo = actor._geo;
+            }
+        }
+    });
+
+    // Phase 4: Remaining events — try name-based geo from event name itself
+    nodes.forEach(n => {
+        if (n._geo || n.label !== 'Evento') return;
+        n._geo = lookupCentroid(n);
+    });
+
+    // Phase 5: Propagate — anyone connected to someone who knows, learns.
+    // "Las cosas no saben, pero alguien sí sabe"
+    // Repeat until no more changes.
+    let changed = true;
+    let passes = 0;
+    while (changed && passes < 5) {
+        changed = false;
+        passes++;
+        edges.forEach(e => {
+            const s = typeof e.source === 'object' ? e.source.id : e.source;
+            const t = typeof e.target === 'object' ? e.target.id : e.target;
+            const sn = nodeMap[s], tn = nodeMap[t];
+            if (sn?._geo && tn && !tn._geo) { tn._geo = sn._geo; changed = true; }
+            if (tn?._geo && sn && !sn._geo) { sn._geo = tn._geo; changed = true; }
+        });
+    }
+
+    // Phase 6: Fallback — every node MUST have a geographic position.
+    // Unresolved nodes get placed near Europe center with slight jitter to avoid stacking.
+    const FALLBACK_CENTER = { lat: 48.5, lon: 10.0 }; // Central Europe
+    nodes.forEach(n => {
+        if (n._geo) return;
+        n._geo = {
+            lat: FALLBACK_CENTER.lat + (Math.random() - 0.5) * 6,
+            lon: FALLBACK_CENTER.lon + (Math.random() - 0.5) * 8
+        };
+    });
+}
+
+async function renderTerritory(data) {
+    await loadGeoData();
+
+    const container = document.getElementById('graphPanel');
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    if (simulation) simulation.stop();
+    d3.select('#graph').selectAll('*').remove();
+
+    svg = d3.select('#graph').attr('width', width).attr('height', height);
+    const defs = svg.append('defs');
+
+    // Blur filter for diffuse zones
+    const blurFilter = defs.append('filter').attr('id', 'geo-blur')
+        .attr('x', '-80%').attr('y', '-80%').attr('width', '260%').attr('height', '260%');
+    blurFilter.append('feGaussianBlur').attr('in', 'SourceGraphic').attr('stdDeviation', '18');
+
+    // Arrow defs for edges
+    const edgeTypes = schemaData?.graph?.edges || {};
+    Object.keys(edgeTypes).forEach(type => {
+        const v = edgeVisual(type);
+        defs.append('marker')
+            .attr('id', `arrow-ter-${type}`)
+            .attr('viewBox', '0 0 10 10')
+            .attr('refX', 10).attr('refY', 5)
+            .attr('markerWidth', 5).attr('markerHeight', 5)
+            .attr('orient', 'auto')
+            .append('path')
+            .attr('d', 'M 0 0 L 10 5 L 0 10 Z')
+            .attr('fill', v.color);
+    });
+
+    g = svg.append('g');
+    const zoomBehavior = d3.zoom().scaleExtent([0.3, 6]).on('zoom', e => g.attr('transform', e.transform));
+    svg.call(zoomBehavior);
+
+    // Projection — Europe-focused
+    const worldGeo = topojson.feature(_worldTopo, _worldTopo.objects.countries);
+    const projection = d3.geoNaturalEarth1()
+        .fitSize([width, height], EUROPE_BOUNDS);
+    const path = d3.geoPath(projection);
+
+    const nodes = data.nodes;
+    const edges = data.edges;
+
+    // Connection counts
+    const connCount = {};
+    edges.forEach(e => {
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        connCount[s] = (connCount[s] || 0) + 1;
+        connCount[t] = (connCount[t] || 0) + 1;
+    });
+    nodes.forEach(n => { n._connectionCount = connCount[n.id] || 0; });
+
+    // Geo-resolve all nodes
+    geoResolve(nodes, edges);
+
+    // --- Layer 1: Coastlines ---
+    const coastLayer = g.append('g').attr('class', 'territory-coast');
+    const landColor = themeVar('--ink-faint') || '#6b7385';
+    coastLayer.selectAll('path')
+        .data(worldGeo.features)
+        .join('path')
+        .attr('d', path)
+        .attr('fill', 'none')
+        .attr('stroke', landColor)
+        .attr('stroke-width', 0.4)
+        .attr('opacity', 0.25);
+
+    // --- Layer 2: Diffuse territorial zones ---
+    // Count events per location
+    const locationEventCount = {};
+    nodes.forEach(n => {
+        if (n._geo && n.label === 'Evento') {
+            const key = `${n._geo.lat},${n._geo.lon}`;
+            locationEventCount[key] = (locationEventCount[key] || 0) + 1;
+        }
+    });
+    // Also count actors as activity
+    nodes.forEach(n => {
+        if (n._geo && n.label === 'Actor') {
+            const key = `${n._geo.lat},${n._geo.lon}`;
+            locationEventCount[key] = (locationEventCount[key] || 0) + 0.3;
+        }
+    });
+
+    // Get unique geo positions for zones
+    const zoneMap = {};
+    nodes.forEach(n => {
+        if (!n._geo) return;
+        const key = `${n._geo.lat},${n._geo.lon}`;
+        if (!zoneMap[key]) {
+            const [px, py] = projection([n._geo.lon, n._geo.lat]);
+            zoneMap[key] = { x: px, y: py, count: locationEventCount[key] || 1, lat: n._geo.lat, lon: n._geo.lon };
+        }
+    });
+
+    const zoneData = Object.values(zoneMap);
+    const zoneLayer = g.append('g').attr('class', 'territory-zones');
+
+    // Create radial gradients per zone
+    zoneData.forEach((z, i) => {
+        const grad = defs.append('radialGradient')
+            .attr('id', `zone-grad-${i}`)
+            .attr('cx', '50%').attr('cy', '50%').attr('r', '50%');
+        grad.append('stop').attr('offset', '0%')
+            .attr('stop-color', TYPE_COLORS.Location.fill)
+            .attr('stop-opacity', 0.3);
+        grad.append('stop').attr('offset', '60%')
+            .attr('stop-color', TYPE_COLORS.Location.fill)
+            .attr('stop-opacity', 0.1);
+        grad.append('stop').attr('offset', '100%')
+            .attr('stop-color', TYPE_COLORS.Location.fill)
+            .attr('stop-opacity', 0);
+    });
+
+    zoneLayer.selectAll('ellipse')
+        .data(zoneData)
+        .join('ellipse')
+        .attr('cx', d => d.x)
+        .attr('cy', d => d.y)
+        .attr('rx', d => Math.max(Math.sqrt(d.count) * 35, 25))
+        .attr('ry', d => Math.max(Math.sqrt(d.count) * 25, 18))
+        .attr('fill', (d, i) => `url(#zone-grad-${i})`)
+        .attr('filter', 'url(#geo-blur)')
+        .attr('class', 'territory-zone');
+
+    // --- Layer 3: Connection arcs ---
+    const arcLayer = g.append('g').attr('class', 'territory-arcs');
+    const isFocal = panoramaMode ? (id => focalIds.has(id)) : (id => id === focalId);
+
+    const geoEdges = edges.filter(e => {
+        const s = typeof e.source === 'object' ? e.source : nodes.find(n => n.id === e.source);
+        const t = typeof e.target === 'object' ? e.target : nodes.find(n => n.id === e.target);
+        return s?._geo && t?._geo;
+    });
+
+    arcLayer.selectAll('path')
+        .data(geoEdges)
+        .join('path')
+        .attr('d', e => {
+            const s = typeof e.source === 'object' ? e.source : nodes.find(n => n.id === e.source);
+            const t = typeof e.target === 'object' ? e.target : nodes.find(n => n.id === e.target);
+            // Great circle arc
+            const line = { type: 'LineString', coordinates: [[s._geo.lon, s._geo.lat], [t._geo.lon, t._geo.lat]] };
+            return path(line);
+        })
+        .attr('fill', 'none')
+        .attr('stroke', e => edgeVisual(e.type).color)
+        .attr('stroke-width', e => Math.max(edgeVisual(e.type).width * 0.6, 0.5))
+        .attr('stroke-dasharray', e => edgeVisual(e.type).style === 'dashed' ? '4,3' : null)
+        .attr('opacity', e => {
+            const s = typeof e.source === 'object' ? e.source.id : e.source;
+            const t = typeof e.target === 'object' ? e.target.id : e.target;
+            return (isFocal(s) || isFocal(t)) ? 0.5 : 0.15;
+        })
+        .attr('marker-end', e => `url(#arrow-ter-${e.type})`);
+
+    // --- Layer 4: Node labels positioned by geo ---
+    nodeGroup = g.append('g').attr('class', 'territory-labels');
+    const bgGroup = g.append('g').attr('class', 'territory-bg-layer');
+
+    // Jitter same-location nodes with golden angle spiral
+    const positionCounts = {};
+    nodes.forEach(n => {
+        if (!n._geo) return;
+        const key = `${n._geo.lat},${n._geo.lon}`;
+        positionCounts[key] = (positionCounts[key] || 0) + 1;
+        const [px, py] = projection([n._geo.lon, n._geo.lat]);
+        const idx = positionCounts[key];
+        const angle = (idx * 2.399) % (Math.PI * 2); // golden angle
+        const radius = 12 + Math.sqrt(idx) * 18;
+        n.x = px + Math.cos(angle) * radius;
+        n.y = py + Math.sin(angle) * radius;
+        n.fx = n.x;
+        n.fy = n.y;
+    });
+
+    // Mark unresolved nodes
+    nodes.forEach(n => {
+        if (!n._geo) n._unresolved = true;
+    });
+
+    // Date filter
+    const dateFilter = (typeof Timeline !== 'undefined') ? Timeline.getVisibleDateIds() : null;
+
+    // Only render geo-resolved nodes on the map
+    const geoNodes = nodes.filter(n => n._geo);
+
+    const node = nodeGroup.selectAll('g')
+        .data(geoNodes)
+        .join('g')
+        .attr('transform', d => `translate(${d.x},${d.y})`)
+        .attr('cursor', 'pointer')
+        .attr('visibility', d => {
+            if (d._degree > currentDegree) return 'hidden';
+            if (dateFilter && d.label === 'Evento' && d.date && d.date !== 'null' && !dateFilter.has(d.id)) return 'hidden';
+            return 'visible';
+        })
+        .on('click', (e, d) => {
+            e.stopPropagation();
+            if (d.label === 'Actor' || d.label === 'Evento') navigateTo(d.id);
+            else showDetail(d);
+        });
+
+    // Text labels — same typography as titles view
+    node.append('text')
+        .text(d => {
+            const name = d.name || d.id;
+            return name.length > MAX_LABEL_LEN ? name.slice(0, MAX_LABEL_LEN) + '...' : name;
+        })
+        .attr('font-size', d => {
+            const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
+            const base = style.fontSize;
+            if (isFocal(d.id)) return base + 4;
+            return base + Math.min(d._connectionCount * 0.2, 3);
+        })
+        .attr('font-weight', d => {
+            if (panoramaMode && d.label === 'Actor' && d._connectionCount >= 2) return 700;
+            return (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontWeight;
+        })
+        .attr('font-style', d => (TITLE_STYLE[d.type] || TITLE_STYLE.Object).fontStyle)
+        .attr('font-family', d => {
+            const style = TITLE_STYLE[d.type] || TITLE_STYLE.Object;
+            return style.font === 'serif' ? 'Alegreya, Georgia, serif' : 'Alegreya Sans, system-ui, sans-serif';
+        })
+        .attr('fill', d => {
+            if (isFocal(d.id)) return themeVar('--graph-label-focal');
+            return nodeColor(d);
+        })
+        .attr('text-anchor', 'start')
+        .attr('dominant-baseline', 'central')
+        .attr('opacity', d => d._degree === 2 ? 0.25 : (isFocal(d.id) ? 1 : 0.85));
+
+    // Measure bboxes for bg rects
+    node.each(function(d) {
+        const bbox = this.querySelector('text')?.getBBox();
+        if (bbox) {
+            d._bboxW = bbox.width;
+            d._bboxH = bbox.height;
+        }
+    });
+
+    // Background rects
+    const bgTheme = themeVar('--bg-app');
+    bgGroup.selectAll('rect')
+        .data(geoNodes.filter(n => n._degree <= currentDegree))
+        .join('rect')
+        .attr('x', d => d.x - 4)
+        .attr('y', d => d.y - ((d._bboxH || 14) + 4) / 2)
+        .attr('width', d => (d._bboxW || 48) + 8)
+        .attr('height', d => (d._bboxH || 14) + 4)
+        .attr('rx', 2).attr('ry', 2)
+        .attr('fill', bgTheme)
+        .attr('opacity', 0.7)
+        .attr('pointer-events', 'none');
+
+    // Tooltip
+    let tooltip_t = document.querySelector('.graph-tooltip');
+    if (!tooltip_t) {
+        tooltip_t = document.createElement('div');
+        tooltip_t.className = 'graph-tooltip';
+        container.appendChild(tooltip_t);
+    }
+
+    const textEls = nodeGroup.selectAll('text');
+    const arcPaths = arcLayer.selectAll('path');
+
+    node.on('mouseenter', function(e, d) {
+        const hasDate = d.label === 'Evento' && d.date && d.date !== 'null';
+        const hasDesc = d.description && d.description.length > 0;
+        if (hasDate || hasDesc) {
+            let html = '';
+            if (hasDate) html += `<span class="tooltip-date" style="margin-left:0">${formatDate(d.date)}</span>`;
+            if (hasDesc) html += `${hasDate ? '<br>' : ''}<span class="tooltip-desc">${d.description}</span>`;
+            tooltip_t.innerHTML = html;
+            tooltip_t.classList.add('visible');
+            const containerRect = container.getBoundingClientRect();
+            const svgEl = document.getElementById('graph');
+            const pt = svgEl.createSVGPoint();
+            pt.x = d.x; pt.y = d.y - (d._bboxH || 14) / 2;
+            const ctm = g.node().getCTM();
+            if (ctm) {
+                const sp = pt.matrixTransform(ctm);
+                tooltip_t.style.left = (sp.x - containerRect.left) + 'px';
+                tooltip_t.style.top = (sp.y - containerRect.top - tooltip_t.offsetHeight - 6) + 'px';
+            }
+        }
+
+        // Highlight connections
+        const connIds = new Set();
+        edges.forEach(e => {
+            const s = typeof e.source === 'object' ? e.source.id : e.source;
+            const t = typeof e.target === 'object' ? e.target.id : e.target;
+            if (s === d.id) connIds.add(t);
+            if (t === d.id) connIds.add(s);
+        });
+
+        textEls.attr('opacity', n => {
+            if (n.id === d.id) return 1;
+            if (connIds.has(n.id)) return 0.9;
+            return 0.1;
+        });
+        arcPaths.attr('opacity', l => {
+            const s = typeof l.source === 'object' ? l.source.id : l.source;
+            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            return (s === d.id || t === d.id) ? 0.7 : 0.03;
+        });
+    })
+    .on('mouseleave', () => {
+        tooltip_t.classList.remove('visible');
+        textEls.attr('opacity', d => d._degree === 2 ? 0.25 : (isFocal(d.id) ? 1 : 0.85));
+        arcPaths.attr('opacity', e => {
+            const s = typeof e.source === 'object' ? e.source.id : e.source;
+            const t = typeof e.target === 'object' ? e.target.id : e.target;
+            return (isFocal(s) || isFocal(t)) ? 0.5 : 0.15;
+        });
+    });
+
+    // Collision simulation — gentle, positions are mostly fixed
+    simulation = d3.forceSimulation(nodes.filter(n => n._geo))
+        .alphaDecay(0.05)
+        .velocityDecay(0.6)
+        .force('rectCollide', forceRectCollide())
+        .on('tick', () => {
+            node.attr('transform', d => `translate(${d.x},${d.y})`);
+            bgGroup.selectAll('rect')
+                .attr('x', d => d.x - 4)
+                .attr('y', d => d.y - ((d._bboxH || 14) + 4) / 2);
+        });
+
+    // Let collision settle then release fixed positions for geo-resolved nodes only
+    setTimeout(() => {
+        nodes.forEach(n => { if (n._geo) { n.fx = null; n.fy = null; } });
+        // Re-apply gentle geo-gravity so nodes stay near their territory
+        simulation.force('geo-gravity', alpha => {
+            nodes.forEach(n => {
+                if (!n._geo) return;
+                const [tx, ty] = projection([n._geo.lon, n._geo.lat]);
+                const key = `${n._geo.lat},${n._geo.lon}`;
+                const idx = (positionCounts[key] || 1);
+                const angle = (idx * 2.399) % (Math.PI * 2);
+                const radius = 12 + Math.sqrt(idx) * 18;
+                const targetX = tx + Math.cos(angle) * radius;
+                const targetY = ty + Math.sin(angle) * radius;
+                n.vx += (targetX - n.x) * alpha * 0.08;
+                n.vy += (targetY - n.y) * alpha * 0.08;
+            });
+        });
+        simulation.alpha(0.3).restart();
+    }, 1500);
+
+    // Update timeline
+    if (typeof Timeline !== 'undefined') Timeline.update(data);
+}
+
+// Extracted from renderTitles for reuse
+function forceRectCollide() {
+    let nds;
+    function force(alpha) {
+        for (let iter = 0; iter < 3; iter++) {
+        for (let i = 0; i < nds.length; i++) {
+            for (let j = i + 1; j < nds.length; j++) {
+                const a = nds[i], b = nds[j];
+                if (a._degree > currentDegree || b._degree > currentDegree) continue;
+                const ax = a.x + (a._bboxOffsetX || 0);
+                const bx = b.x + (b._bboxOffsetX || 0);
+                const dx = bx - ax, dy = b.y - a.y;
+                const minDistX = ((a._w || 80) + (b._w || 80)) / 2 + 6;
+                const minDistY = ((a._h || 18) + (b._h || 18)) / 2 + 6;
+                const overlapX = minDistX - Math.abs(dx);
+                const overlapY = minDistY - Math.abs(dy);
+                if (overlapX > 0 && overlapY > 0) {
+                    const push = Math.max(alpha, 0.3) * 0.8;
+                    if (overlapX < overlapY) {
+                        const sx = (dx > 0 ? 1 : -1) * overlapX * push;
+                        a.x -= sx; b.x += sx;
+                    } else {
+                        const sy = (dy > 0 ? 1 : -1) * overlapY * push;
+                        a.y -= sy; b.y += sy;
+                    }
+                }
+            }
+        }
+        }
+    }
+    force.initialize = function(nodes) { nds = nodes; };
+    return force;
 }
 
 function makeDrag() {
@@ -1148,6 +1838,21 @@ async function showDetail(node) {
     content.hidden = false;
     document.getElementById('detailBody').innerHTML = renderDetail(node) +
         `<div class="detail-section" id="newsSection"><h3>${t('detail.news')}</h3><p class="loading-inline">${t('detail.news.loading')}</p></div>`;
+
+    // Geo-resolve and render mini-map
+    if (_geoCentroids && _worldTopo) {
+        if (!node._geo) {
+            const nameIndex = _geoCentroids.$nameIndex || {};
+            const nameLower = (node.name || '').toLowerCase();
+            node._geo = _geoCentroids[node.id] || (nameIndex[nameLower] && _geoCentroids[nameIndex[nameLower]]) || null;
+            if (!node._geo) {
+                for (const [alias, cid] of Object.entries(nameIndex)) {
+                    if (alias.length >= 4 && nameLower.includes(alias)) { node._geo = _geoCentroids[cid]; break; }
+                }
+            }
+        }
+        renderMiniMap('detailMiniMap', node);
+    }
 
     // Load aliases for Actor/Evento
     if (node.label === 'Actor' || node.label === 'Evento') {
@@ -1203,9 +1908,9 @@ function renderDetail(node) {
         html += `<div class="detail-type-row">
             ${nodeDot(label, 'Event')}
             <select id="nodeTypeSelect" class="node-type-select" onchange="updateNodeType('${node.id}', this.value, 'event_type')">
-                ${eventTypes.map(et => `<option value="${et}" ${et === node.event_type ? 'selected' : ''}>${et.replace(/_/g, ' ')}</option>`).join('')}
+                ${eventTypes.map(et => `<option value="${et}" ${et === node.event_type ? 'selected' : ''}>${tEventType(et)}</option>`).join('')}
             </select>
-            ${node.date && node.date !== 'null' && node.date !== '' ? `<span class="event-date-badge">${node.date}</span>` : ''}
+            ${node.date && node.date !== 'null' && node.date !== '' ? `<span class="event-date-badge">${formatDate(node.date)}</span>` : ''}
             ${node.is_disputed ? `<span class="disputed-badge">${t('detail.disputed')}</span>` : ''}
         </div>`;
     } else {
@@ -1231,6 +1936,9 @@ function renderDetail(node) {
         onblur="saveNodeField(this)"
         data-placeholder="${t('detail.addDescription') || 'Agregar descripción...'}"
         >${node.description || ''}</p>`;
+
+    // Mini-map container
+    html += `<div id="detailMiniMap" class="detail-minimap"></div>`;
 
     // Event-specific metadata
     if (label === 'Evento') {
@@ -1297,7 +2005,7 @@ function renderConnections(node) {
 
     // Group by NODE TYPE for columnar layout
     const typeOrder = ['Person', 'Location', 'Organization', 'Event', 'Object'];
-    const typeLabels = { Person: t('type.Person'), Location: t('type.Location'), Organization: t('type.Organization'), Event: t('type.Event'), Object: t('type.Object') };
+    const typeLabels = { Person: tType('Person'), Location: tType('Location'), Organization: tType('Organization'), Event: tType('Event'), Object: tType('Object') };
     const byType = {};
     for (const c of connections) {
         const ntype = c.node.type || c.node.label || 'Object';
@@ -1365,13 +2073,9 @@ function renderConnections(node) {
             <div class="relation-field" style="flex:1">
                 <label class="relation-label">${t('detail.relationType') || 'Tipo'}</label>
                 <select id="relationTypeSelect" class="node-type-select">
-                    <option value="PARTICIPA">participa</option>
-                    <option value="PERTENECE_A">pertenece a</option>
-                    <option value="UBICADO_EN">ubicado en</option>
-                    <option value="CAUSA">causa</option>
-                    <option value="CONTRADICE">contradice</option>
-                    <option value="COMPLEMENTA">complementa</option>
-                    <option value="ACTUALIZA">actualiza</option>
+                    ${Object.keys(schemaData?.graph?.edges || {}).map(k =>
+                        `<option value="${k}">${tEdge(k).toLowerCase()}</option>`
+                    ).join('\n                    ')}
                 </select>
             </div>
             <div class="relation-field" style="flex:1">
