@@ -84,7 +84,8 @@
         "Iran",
         "Islamic Republic of Iran",
         "Teherán",
-        "Tehran"
+        "Tehran",
+        "Persia"
       ]
     },
     "israel": {
@@ -342,14 +343,6 @@
       "type": "Organization",
       "aliases": []
     },
-    "pentagono": {
-      "canonical": "Pentágono",
-      "type": "Location",
-      "aliases": [
-        "pentagon",
-        "pentagonoo"
-      ]
-    },
     "hegseth": {
       "canonical": "Lloyd Austin (no aparece en el texto, pero es el Secretario de Defensa de EE.UU.)",
       "type": "Person",
@@ -466,13 +459,33 @@
       ]
     },
     "encarcelamiento-cientifico-artico-rusia": {
+      "canonical": "Encarcelamiento de científico por investigación en el Ártico",
+      "type": "Event",
       "aliases": [
         "russia-scientist-imprisonment"
       ]
     },
     "abusador-online-encontrado": {
+      "canonical": "Actriz denuncia abuso en línea por su esposo",
+      "type": "Event",
       "aliases": [
         "actriz-deepfakes-germania"
+      ]
+    },
+    "new-zealand": {
+      "canonical": "New Zealand",
+      "type": "Location",
+      "aliases": [
+        "Aotearoa"
+      ]
+    },
+    "pentagon_whistleblower": {
+      "canonical": "Pentágono",
+      "type": "Organization",
+      "aliases": [
+        "pentagon",
+        "pentagonoo",
+        "pentagono"
       ]
     }
   }

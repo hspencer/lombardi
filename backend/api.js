@@ -578,7 +578,7 @@ async function handleAPI(req, res) {
         let mergeCandidate = null;
         for (const [entId, entry] of Object.entries(aliasData.entities)) {
             if (entId === id) continue;
-            const allNames = [entry.canonical, ...entry.aliases].map(s => s.toLowerCase());
+            const allNames = [entry.canonical, ...(entry.aliases || [])].filter(Boolean).map(s => String(s).toLowerCase());
             if (allNames.includes(alias.toLowerCase()) || entId === alias.toLowerCase()) {
                 mergeCandidate = { id: entId, ...entry };
                 break;
