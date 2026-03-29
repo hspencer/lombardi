@@ -84,7 +84,7 @@ async function ageQuery2(cypher, cols) {
 async function handleAPI(req, res) {
     const url = new URL(req.url, `http://localhost:${PORT}`);
 
-    // === DISPUTES: all disputed nodes + contradiction edges + connected actors ===
+    // === DISPUTES: all disputed nodes + controversy edges + connected actors ===
     if (url.pathname === '/api/disputes') {
         const nodeMap = new Map();
         const edgeList = [];
@@ -101,16 +101,17 @@ async function handleAPI(req, res) {
             nodeMap.set(n.id, n);
         }
 
-        // 2. CONTRADICE / DESMIENTE edges + their endpoints
-        const contradictions = await ageQuery(
-            `MATCH (a)-[r]->(b) WHERE type(r) = 'CONTRADICE' OR type(r) = 'DESMIENTE' RETURN a, r, b`
+        // 2. All controversy edges (CONTRADICE, DESMIENTE, COMPLEMENTA, CAUSA) + their endpoints
+        const controversyEdges = await ageQuery2(
+            `MATCH (a)-[r]->(b) WHERE type(r) IN ['CONTRADICE', 'DESMIENTE', 'COMPLEMENTA', 'CAUSA'] RETURN a, r, b`,
+            ['a', 'r', 'b']
         ).catch(() => []);
 
-        for (const row of contradictions) {
-            const a = flat(row[0] || row);
-            const r = row[1]?.properties || {};
-            const b = flat(row[2] || {});
-            const rtype = row[1]?.label || 'CONTRADICE';
+        for (const row of controversyEdges) {
+            const a = flat(row.a);
+            const r = row.r?.properties || {};
+            const b = flat(row.b);
+            const rtype = row.r?.label || 'CONTRADICE';
 
             if (a.id && !nodeMap.has(a.id)) {
                 a._degree = 0;
@@ -127,18 +128,19 @@ async function handleAPI(req, res) {
             }
         }
 
-        // 3. Actors connected to disputed nodes
-        const disputedIds = Array.from(nodeMap.keys()).map(id => `'${esc(id)}'`).join(',');
-        if (disputedIds.length > 0) {
-            const actors = await ageQuery(
-                `MATCH (a:Actor)-[r]-(n) WHERE n.id IN [${disputedIds}] RETURN a, r, n`
+        // 3. Actors connected to disputed/controversy nodes
+        const allIds = Array.from(nodeMap.keys()).map(id => `'${esc(id)}'`).join(',');
+        if (allIds.length > 0) {
+            const actors = await ageQuery2(
+                `MATCH (a:Actor)-[r]-(n) WHERE n.id IN [${allIds}] RETURN a, r, n`,
+                ['a', 'r', 'n']
             ).catch(() => []);
 
             for (const row of actors) {
-                const a = flat(row[0] || row);
-                const r = row[1]?.properties || {};
-                const n = row[2] || {};
-                const rtype = row[1]?.label || 'PARTICIPA';
+                const a = flat(row.a);
+                const r = row.r?.properties || {};
+                const n = row.n;
+                const rtype = row.r?.label || 'PARTICIPA';
 
                 if (a.id && !nodeMap.has(a.id)) {
                     a._degree = 1;
@@ -307,25 +309,25 @@ async function handleAPI(req, res) {
             });
         }
 
-        // Expand degree by degree: each degree = one hop from previous frontier
+        // Expand degree by degree: batched single query per degree
         for (let deg = 1; deg <= maxDegree; deg++) {
-            const frontierIds = [...nodesMap.values()].filter(n => n._degree === deg - 1).map(n => esc(n.id));
-            if (frontierIds.length === 0) break;
+            const frontier = [...nodesMap.values()].filter(n => n._degree === deg - 1);
+            if (frontier.length === 0) break;
 
             const limit = deg === 1 ? 50 : deg === 2 ? 20 : 10;
-            for (const nId of frontierIds.slice(0, limit)) {
-                const neighbors = await ageQuery2(
-                    `MATCH (n1 {id: '${nId}'})-[r]-(n2) WHERE label(n2) IN ['Actor', 'Evento'] RETURN n2, r`,
-                    ['n2', 'r']
-                ).catch(err => { console.error(`Ego expand deg=${deg} nId=${nId}:`, err.message); return []; });
+            const batchIds = frontier.slice(0, limit).map(n => `'${esc(n.id)}'`).join(',');
 
-                for (const row of neighbors) {
-                    const n2 = flat(row.n2);
-                    if (!nodesMap.has(n2.id)) {
-                        nodesMap.set(n2.id, { ...n2, _degree: deg });
-                    }
-                    addEdge(row.r);
+            const neighbors = await ageQuery2(
+                `MATCH (n1)-[r]-(n2) WHERE n1.id IN [${batchIds}] AND label(n2) IN ['Actor', 'Evento'] RETURN n2, r`,
+                ['n2', 'r']
+            ).catch(err => { console.error(`Ego expand deg=${deg}:`, err.message); return []; });
+
+            for (const row of neighbors) {
+                const n2 = flat(row.n2);
+                if (!nodesMap.has(n2.id)) {
+                    nodesMap.set(n2.id, { ...n2, _degree: deg });
                 }
+                addEdge(row.r);
             }
         }
 
