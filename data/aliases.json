@@ -97,18 +97,6 @@
         "Jerusalén"
       ]
     },
-    "union-europea": {
-      "canonical": "Unión Europea",
-      "type": "Organization",
-      "aliases": [
-        "EU",
-        "UE",
-        "European Union",
-        "Bruselas",
-        "Brussels",
-        "the EU"
-      ]
-    },
     "otan": {
       "canonical": "OTAN",
       "type": "Organization",
@@ -354,22 +342,6 @@
       "type": "Organization",
       "aliases": []
     },
-    "estados-unidos-de-america": {
-      "canonical": "Estados Unidos",
-      "type": "Location",
-      "aliases": [
-        "EE.UU.",
-        "EEUU",
-        "USA",
-        "US",
-        "United States",
-        "the United States",
-        "the US",
-        "America",
-        "Washington",
-        "estados-unidos"
-      ]
-    },
     "pentagono": {
       "canonical": "Pentágono",
       "type": "Location",
@@ -388,7 +360,19 @@
     "estados-unidos": {
       "canonical": "Estados Unidos",
       "type": "Location",
-      "aliases": []
+      "aliases": [
+        "EE.UU.",
+        "EEUU",
+        "USA",
+        "US",
+        "United States",
+        "the United States",
+        "the US",
+        "America",
+        "Washington",
+        "estados-unidos-de-america",
+        "U.S.A."
+      ]
     },
     "pentagonoo": {
       "canonical": "Pentágono",
@@ -433,6 +417,19 @@
         "Beijing",
         "Pekín",
         "china"
+      ]
+    },
+    "europe-jfk": {
+      "canonical": "Unión Europea",
+      "type": "Organization",
+      "aliases": [
+        "EU",
+        "UE",
+        "European Union",
+        "Bruselas",
+        "Brussels",
+        "the EU",
+        "union-europea"
       ]
     }
   }

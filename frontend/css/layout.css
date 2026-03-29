@@ -257,9 +257,29 @@ body {
     color: var(--ink-muted);
 }
 
+.process-section-divider {
+    border-top: 1px solid var(--border-default);
+    margin: var(--space-sm) 0;
+}
+
+.process-section-label {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: .1ex;
+    grid-column: 1 / -1;
+    padding-bottom: 2px;
+}
+
+.process-stat.warn .process-stat-value {
+    color: var(--accent);
+}
+
 .process-actions {
     display: flex;
     gap: var(--space-sm);
+    flex-wrap: wrap;
 }
 
 .process-runner {

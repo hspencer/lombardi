@@ -64,7 +64,8 @@
 .graph-tooltip .tooltip-date {
     display: inline-block;
     margin-left: 6px;
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
+    font-style: italic;
     font-size: var(--font-size-xs);
     color: var(--accent);
     opacity: 0.85;

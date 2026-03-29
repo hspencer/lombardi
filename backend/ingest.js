@@ -203,13 +203,19 @@ async function writeToGraph(client, newsItem, extraction) {
     if (!evt || !evt.id) return;
 
     // 1. Create Evento node
+    // Fallback: use pub_date from the news item if LLM didn't extract a date
+    const eventDate = evt.date || newsItem.pub_date || '';
+    // Normalize: extract YYYY-MM-DD from various date formats
+    const dateMatch = eventDate.match(/(\d{4}-\d{2}-\d{2})/);
+    const normalizedDate = dateMatch ? dateMatch[1] : eventDate.slice(0, 10);
+
     try {
         await client.query(`
             SELECT * FROM cypher('lombardi', $$
                 MERGE (e:Evento {id: '${esc(evt.id)}'})
                 SET e.name = '${esc(evt.name)}',
                     e.event_type = '${esc(evt.event_type)}',
-                    e.date = '${esc(evt.date || '')}',
+                    e.date = '${esc(normalizedDate)}',
                     e.is_disputed = ${evt.is_disputed || false},
                     e.evidence_quote = '${esc(evt.evidence_quote || '')}',
                     e.source = '${esc(newsItem.source_name)}',

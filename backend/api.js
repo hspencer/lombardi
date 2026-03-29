@@ -902,12 +902,15 @@ async function handleAPI(req, res) {
 
                     const evt = extraction.event;
 
-                    // Create/merge Evento node
+                    // Create/merge Evento node — fallback to pub_date if no extracted date
+                    const evtDate = evt.date || newsItem.pub_date || '';
+                    const evtDateMatch = evtDate.match(/(\d{4}-\d{2}-\d{2})/);
+                    const evtNormDate = evtDateMatch ? evtDateMatch[1] : evtDate.slice(0, 10);
                     await ageQuery(`
                         MERGE (e:Evento {id: '${esc(evt.id)}'})
                         SET e.name = '${esc(evt.name)}',
                             e.event_type = '${esc(evt.event_type)}',
-                            e.date = '${esc(evt.date || '')}',
+                            e.date = '${esc(evtNormDate)}',
                             e.is_disputed = ${evt.is_disputed || false},
                             e.evidence_quote = '${esc(evt.evidence_quote || '')}',
                             e.source = '${esc(newsItem.source_name || '')}',
@@ -1950,6 +1953,163 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
         return;
     }
 
+    // --- Graph maintenance / pruning ---
+    if (url.pathname === '/api/graph/health' && req.method === 'GET') {
+        try {
+            const client = await pool.connect();
+            try {
+                await client.query("LOAD 'age'");
+                await client.query("SET search_path = ag_catalog, public");
+
+                // Fast queries only — avoid full-graph scans
+                const totalR = await client.query("SELECT count(*) FROM lombardi._ag_label_vertex");
+                const edgeR = await client.query("SELECT count(*) FROM lombardi._ag_label_edge");
+                const noDateR = await client.query(`SELECT count(*) FROM cypher('lombardi', $$ MATCH (e:Evento) WHERE e.date IS NULL OR e.date = '' OR e.date = 'null' RETURN e $$) as (e agtype)`);
+                const orphanR = await client.query(`SELECT count(*) FROM cypher('lombardi', $$ MATCH (n) WHERE NOT EXISTS { (n)-[]-() } RETURN n $$) as (n agtype)`);
+
+                // News stats from SQL
+                const newsR = await client.query("SELECT count(*) as total FROM news_raw");
+                const sourcesR = await client.query("SELECT count(DISTINCT source_name) as n FROM news_raw");
+
+                const health = {
+                    total_nodes: parseInt(totalR.rows[0].count),
+                    total_edges: parseInt(edgeR.rows[0].count),
+                    orphans: parseInt(orphanR.rows[0].count),
+                    events_no_date: parseInt(noDateR.rows[0].count),
+                    news_total: parseInt(newsR.rows[0].total),
+                    news_sources: parseInt(sourcesR.rows[0].n)
+                };
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(health));
+            } finally {
+                client.release();
+            }
+        } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    if (url.pathname === '/api/graph/prune' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const actions = body.actions || ['orphans', 'mistyped'];
+        const dryRun = body.dry_run !== false; // default: dry run
+        const results = { removed: [], fixed: [], dry_run: dryRun };
+
+        try {
+            // 1. Remove orphan nodes (zero edges)
+            if (actions.includes('orphans')) {
+                const orphans = await ageQuery('MATCH (n) WHERE NOT EXISTS { (n)-[]-() } RETURN n');
+                for (const n of orphans) {
+                    results.removed.push({ id: n.id, name: n.name, label: n.label, reason: 'orphan' });
+                    if (!dryRun) {
+                        await ageQuery(`MATCH (n {id: '${esc(n.id)}'}) DELETE n RETURN true`).catch(() => {});
+                    }
+                }
+            }
+
+            // 2. Fix mistyped actors (type=Event/EVENTO → should be Evento label)
+            if (actions.includes('mistyped')) {
+                const mistyped = await ageQuery("MATCH (a:Actor) WHERE a.type IN ['Event', 'EVENTO', 'Evento'] RETURN a");
+                for (const n of mistyped) {
+                    results.fixed.push({ id: n.id, name: n.name, reason: 'actor typed as event' });
+                    // Can't relabel in AGE, but we can fix the type to a proper Actor type
+                    if (!dryRun) {
+                        await ageQuery(`
+                            MATCH (a:Actor {id: '${esc(n.id)}'})
+                            SET a.type = 'Organization'
+                            RETURN a
+                        `).catch(() => {});
+                    }
+                }
+            }
+
+            // 3. Remove leaf events with no content (degree 1, no description, no evidence)
+            if (actions.includes('thin_events')) {
+                const thinEvents = await ageQuery(`
+                    MATCH (e:Evento)-[r]-()
+                    WITH e, count(r) as deg
+                    WHERE deg = 1
+                        AND (e.evidence_quote IS NULL OR e.evidence_quote = '')
+                        AND (e.name IS NULL OR e.name = '' OR e.name = e.id)
+                    RETURN e
+                `);
+                for (const e of thinEvents) {
+                    results.removed.push({ id: e.id, name: e.name, label: 'Evento', reason: 'thin event (no content, degree 1)' });
+                    if (!dryRun) {
+                        await ageQuery(`MATCH (e:Evento {id: '${esc(e.id)}'})-[r]-() DELETE r, e RETURN true`).catch(() => {});
+                    }
+                }
+            }
+
+            // 4. Remove leaf actors with no description and degree 1
+            if (actions.includes('thin_actors')) {
+                const thinActors = await ageQuery(`
+                    MATCH (a:Actor)-[r]-()
+                    WITH a, count(r) as deg
+                    WHERE deg = 1
+                        AND (a.description IS NULL OR a.description = '')
+                        AND (a.type IS NULL OR a.type = '')
+                    RETURN a
+                `);
+                for (const a of thinActors) {
+                    results.removed.push({ id: a.id, name: a.name, label: 'Actor', reason: 'thin actor (no description/type, degree 1)' });
+                    if (!dryRun) {
+                        await ageQuery(`MATCH (a:Actor {id: '${esc(a.id)}'})-[r]-() DELETE r, a RETURN true`).catch(() => {});
+                    }
+                }
+            }
+
+            // 5. Merge duplicate nodes (same canonical name)
+            if (actions.includes('duplicates')) {
+                const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+                const canonicalToIds = {};
+                for (const [id, entry] of Object.entries(aliasData.entities)) {
+                    const c = entry.canonical.toLowerCase();
+                    if (!canonicalToIds[c]) canonicalToIds[c] = [];
+                    canonicalToIds[c].push(id);
+                }
+                for (const [canonical, ids] of Object.entries(canonicalToIds)) {
+                    if (ids.length < 2) continue;
+                    results.fixed.push({ canonical, ids, reason: 'duplicate canonical name' });
+                    // Merge: keep the first, redirect edges from the rest
+                    if (!dryRun) {
+                        const keep = ids[0];
+                        for (const dup of ids.slice(1)) {
+                            // Re-point edges from dup → keep
+                            const edges = await ageQuery2(
+                                `MATCH (n {id: '${esc(dup)}'})-[r]-(m) RETURN r, m`, ['r', 'm']
+                            ).catch(() => []);
+                            for (const e of (edges || [])) {
+                                const edgeType = e.r.label;
+                                const otherId = e.m.id;
+                                if (otherId === keep) continue;
+                                await ageQuery(`
+                                    MATCH (a {id: '${esc(keep)}'}), (b {id: '${esc(otherId)}'})
+                                    MERGE (a)-[:${edgeType}]->(b)
+                                    RETURN a
+                                `).catch(() => {});
+                            }
+                            // Delete dup and its edges
+                            await ageQuery(`MATCH (n {id: '${esc(dup)}'})-[r]-() DELETE r, n RETURN true`).catch(() => {});
+                            await ageQuery(`MATCH (n {id: '${esc(dup)}'}) DELETE n RETURN true`).catch(() => {});
+                        }
+                    }
+                }
+            }
+
+            console.log(`[Prune] ${dryRun ? 'DRY RUN' : 'EXECUTED'}: ${results.removed.length} removed, ${results.fixed.length} fixed`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(results));
+        } catch (err) {
+            console.error('Prune error:', err.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
 }
@@ -1984,4 +2144,45 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
-server.listen(PORT, () => console.log(`OS API: http://localhost:${PORT}`));
+server.listen(PORT, async () => {
+    console.log(`OS API: http://localhost:${PORT}`);
+
+    // Backfill: assign dates to events that lack them, using news_raw pub_date
+    try {
+        const client = await pool.connect();
+        await client.query("LOAD 'age'");
+        await client.query("SET search_path = ag_catalog, public");
+        const undated = await client.query(`
+            SELECT * FROM cypher('lombardi', $$
+                MATCH (e:Evento) WHERE e.date IS NULL OR e.date = '' OR e.date = 'null'
+                RETURN e
+            $$) as (e agtype)
+        `);
+        let fixed = 0;
+        for (const row of undated.rows) {
+            const evt = parseAgtype(row.e);
+            const url = evt.properties?.source_url;
+            if (!url) continue;
+            const news = await client.query('SELECT pub_date FROM news_raw WHERE link = $1', [url]);
+            if (news.rows.length && news.rows[0].pub_date) {
+                const pd = news.rows[0].pub_date;
+                const m = pd.match(/(\d{4}-\d{2}-\d{2})/);
+                const dateStr = m ? m[1] : pd.slice(0, 10);
+                if (dateStr && dateStr.length >= 8) {
+                    await client.query(`
+                        SELECT * FROM cypher('lombardi', $$
+                            MATCH (e:Evento {id: '${esc(evt.properties.id)}'})
+                            SET e.date = '${esc(dateStr)}'
+                            RETURN e
+                        $$) as (e agtype)
+                    `);
+                    fixed++;
+                }
+            }
+        }
+        client.release();
+        if (fixed) console.log(`OS: Backfill — ${fixed} eventos recibieron fecha desde news_raw.`);
+    } catch (err) {
+        console.error('Backfill error:', err.message);
+    }
+});

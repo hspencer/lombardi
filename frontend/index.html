@@ -32,9 +32,14 @@
                     <div class="process-bar" id="processBar"></div>
                 </div>
                 <div id="processDetails" class="process-details"></div>
+                <div class="process-section-divider"></div>
+                <div id="graphHealthDetails" class="process-details"></div>
                 <div class="process-actions">
                     <button id="fetchRssBtn" class="ingest-btn" onclick="fetchNewRSS()">
                         <i data-feather="rss"></i> <span id="fetchRssLabel"></span>
+                    </button>
+                    <button id="pruneBtn" class="ingest-btn" onclick="pruneGraph()">
+                        <i data-feather="scissors"></i> <span id="pruneBtnLabel"></span>
                     </button>
                     <button class="ingest-btn" onclick="toggleConsole()">
                         <i data-feather="terminal"></i> <span id="consoleBtnLabel"></span>
@@ -50,6 +55,7 @@
     <main class="split-view">
         <div class="split-left" id="graphPanel">
             <div class="graph-toolbar">
+                <button id="territoryToggle" class="view-toggle" onclick="toggleTerritory()" title="Territorio"><i data-feather="globe"></i></button>
                 <button id="viewTitles" class="view-toggle active" onclick="setView('titles')"></button>
                 <button id="viewNodes" class="view-toggle" onclick="setView('nodes')"></button>
                 <div class="degree-control">
@@ -58,7 +64,6 @@
                     <button class="degree-btn" data-deg="2" onclick="setDegree(2)">2</button>
                     <button class="degree-btn" data-deg="3" onclick="setDegree(3)">3</button>
                 </div>
-                <button id="territoryToggle" class="view-toggle" onclick="toggleTerritory()" title="Territorio"><i data-feather="globe"></i></button>
             </div>
             <svg id="graph"></svg>
             <div id="timelineBar" class="timeline-bar" hidden></div>

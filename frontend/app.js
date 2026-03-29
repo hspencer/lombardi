@@ -16,17 +16,35 @@ let lastEgoData = null; // cache for view switching
 
 // Colors by entity TYPE (not graph label)
 const TYPE_COLORS = {
-    Person:       { fill: '#5C3322', stroke: '#D4A574' },
-    Location:     { fill: '#3D5C2E', stroke: '#A3B88C' },
-    Organization: { fill: '#8B3A2A', stroke: '#E8A088' },
-    Object:       { fill: '#6B5744', stroke: '#C4B5A4' },
-    Event:        { fill: '#7A5D0B', stroke: '#D4A017' }
+    // Actors — reds/warm (sub-type variations)
+    Person:       { fill: '#C45D3E', stroke: '#8B3322' },  // terracotta
+    Organization: { fill: '#A8432A', stroke: '#6E2A18' },  // brick red
+    // Locations — greens
+    Location:     { fill: '#6B8C42', stroke: '#3D5C2E' },  // olive green
+    // Objects — blues
+    Object:       { fill: '#5B7FA5', stroke: '#3A5670' },  // slate blue
+    // Events — earth/ochre (default, sub-types override via eventTypeColor)
+    Event:        { fill: '#C49A2A', stroke: '#8B6D14' }   // ochre gold
+};
+
+// Event sub-type color variations (earth tones)
+const EVENT_TYPE_COLORS = {
+    ACCION_ARMADA:         { fill: '#A67C52', stroke: '#6E4F30' },  // sienna
+    AMENAZA_COERCION:      { fill: '#B5651D', stroke: '#7A4012' },  // burnt orange
+    SANCION_ECONOMICA:     { fill: '#D4A017', stroke: '#8B6D14' },  // gold
+    RUPTURA_DIPLOMATICA:   { fill: '#C49A2A', stroke: '#8B6D14' },  // ochre
+    PROTESTA_SOCIAL:       { fill: '#CC7A3E', stroke: '#8B4F28' },  // copper
+    DENUNCIA_ACUSACION:    { fill: '#B88A5E', stroke: '#7A5D3E' },  // tan
+    DECLARACION_PUBLICA:   { fill: '#D4B896', stroke: '#8B7D5A' },  // wheat
+    ACUERDO_PAZ:           { fill: '#C4A85A', stroke: '#8B7A32' },  // pale gold
+    CAMBIO_LIDERAZGO:      { fill: '#B8860B', stroke: '#7A5A08' },  // dark goldenrod
+    INCAUTACION_DETENCION: { fill: '#A0785A', stroke: '#6B4F3A' },  // brown
 };
 
 // Fallback by graph label
 const LABEL_COLORS = {
-    Afirmacion: { fill: '#8B7D6B', stroke: 'none' },
-    Noticia:    { fill: '#6B5744', stroke: 'none' }
+    Afirmacion: { fill: '#8B7D6B', stroke: '#5C5244' },
+    Noticia:    { fill: '#6B5744', stroke: '#4A3C2E' }
 };
 
 const BASE_RADIUS = { Actor: 8, Evento: 8, Afirmacion: 4, Noticia: 3 };
@@ -43,8 +61,16 @@ function trimTitle(title) {
 function formatDate(dateStr) {
     if (!dateStr || dateStr === 'null' || dateStr === '') return '';
     try {
-        const [y, m, d] = dateStr.split('-').map(Number);
-        const date = new Date(y, m - 1, d);
+        let date;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            date = new Date(y, m - 1, d);
+        } else {
+            date = new Date(dateStr);
+        }
+        if (isNaN(date.getTime())) return dateStr;
+        const day = date.getDate();
+        const year = date.getFullYear();
         const days = currentLang === 'es'
             ? ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado']
             : ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -54,13 +80,17 @@ function formatDate(dateStr) {
         const dayName = days[date.getDay()];
         const monthName = months[date.getMonth()];
         return currentLang === 'es'
-            ? `${dayName} ${d} de ${monthName}, ${y}`
-            : `${dayName} ${monthName} ${d}, ${y}`;
+            ? `${dayName} ${day} de ${monthName}, ${year}`
+            : `${dayName} ${monthName} ${day}, ${year}`;
     } catch { return dateStr; }
 }
 
 function typeColor(d) {
-    if (d.is_disputed && d.label === 'Afirmacion') return { fill: '#C45D3E', stroke: '#E8A088' };
+    if (d.is_disputed && d.label === 'Afirmacion') return { fill: '#C45D3E', stroke: '#8B3322' };
+    // Event sub-type colors
+    if (d.label === 'Evento' && d.event_type && EVENT_TYPE_COLORS[d.event_type]) {
+        return EVENT_TYPE_COLORS[d.event_type];
+    }
     return TYPE_COLORS[d.type] || LABEL_COLORS[d.label] || TYPE_COLORS.Object;
 }
 
@@ -164,6 +194,7 @@ function applyStaticI18n() {
     // Process panel
     document.getElementById('processPanelTitle').textContent = t('process.title');
     document.getElementById('fetchRssLabel').textContent = t('process.fetch');
+    document.getElementById('pruneBtnLabel').textContent = t('graph.prune');
     document.getElementById('consoleBtnLabel').textContent = t('process.console');
     // Console & tooltips
     document.getElementById('consoleTitle').textContent = t('console.title');
@@ -235,8 +266,8 @@ function applyVisibilityFilter() {
     const visibleIds = new Set();
     for (const n of allNodes) {
         if (!degreePassIds.has(n.id)) continue;
-        // Date filter only applies to Evento nodes with real dates
-        if (dateFilter && n.label === 'Evento' && n.date && n.date !== 'null' && !dateFilter.has(n.id)) continue;
+        // Date filter applies to ALL Evento nodes when timeline is active
+        if (dateFilter && n.label === 'Evento' && !dateFilter.has(n.id)) continue;
         visibleIds.add(n.id);
     }
 
@@ -694,24 +725,34 @@ async function renderEgo(data) {
     // --- Simulation ---
     const chargeMap = { Actor: -120, Evento: -300, Afirmacion: -80, Noticia: -40 };
 
+    // In territory mode: pre-position nodes at geo coords, use minimal forces
+    if (territoryEnabled && _mapProjection && _geoCentroids) {
+        nodes.forEach(n => {
+            if (!n._geo) return;
+            const [px, py] = _mapProjection([n._geo.lon, n._geo.lat]);
+            n.x = px;
+            n.y = py;
+        });
+    }
+
     simulation = d3.forceSimulation(nodes)
+        .velocityDecay(territoryEnabled ? 0.7 : 0.4)
         .force('link', d3.forceLink(edges)
             .id(d => d.id)
-            .distance(d => (edgeVisual(d.type).force_distance || 100) * (territoryEnabled ? 2 : 1))
+            .distance(d => (edgeVisual(d.type).force_distance || 100) * (territoryEnabled ? 1.5 : 1))
             .strength(d => {
                 const base = d.type === 'CONTRADICE' ? 0.05 : d.type === 'SOSTIENE' ? 0.8 : 0.4;
-                return territoryEnabled ? base * 0.1 : base;
+                return territoryEnabled ? base * 0.05 : base;
             })
         )
         .force('charge', d3.forceManyBody()
             .strength(d => {
-                if (territoryEnabled) return -20;
+                if (territoryEnabled) return -5;
                 if (d.id === focalId) return -500;
                 return chargeMap[d.label] || -80;
             })
         )
-        .force('contradict-repel', () => {
-            // Extra repulsion for CONTRADICE edges
+        .force('contradict-repel', territoryEnabled ? null : (() => {
             edges.forEach(e => {
                 if (e.type !== 'CONTRADICE') return;
                 const s = typeof e.source === 'object' ? e.source : nodes.find(n => n.id === e.source);
@@ -719,23 +760,22 @@ async function renderEgo(data) {
                 if (!s || !t) return;
                 const dx = t.x - s.x, dy = t.y - s.y;
                 const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                const force = 5000 / (dist * dist); // Strong repulsion
+                const force = 5000 / (dist * dist);
                 s.vx -= (dx / dist) * force;
                 s.vy -= (dy / dist) * force;
                 t.vx += (dx / dist) * force;
                 t.vy += (dy / dist) * force;
             });
-        })
+        }))
         .force('center', territoryEnabled ? null : d3.forceCenter(cx, cy).strength(0.02))
-        .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + (territoryEnabled ? 20 : 4)))
+        .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + (territoryEnabled ? 12 : 4)))
         .force('geo-anchor', (territoryEnabled && _mapProjection && _geoCentroids) ? (alpha => {
             nodes.forEach(n => {
                 if (!n._geo) return;
                 const [tx, ty] = _mapProjection([n._geo.lon, n._geo.lat]);
-                // Strong geographic pull — position nodes at their geo location
-                const strength = 0.3 + 0.7 * alpha;
-                n.vx += (tx - n.x) * strength;
-                n.vy += (ty - n.y) * strength;
+                // Gentle pull back to geo position — nodes already pre-placed
+                n.vx += (tx - n.x) * 0.15;
+                n.vy += (ty - n.y) * 0.15;
             });
         }) : (alpha => {
             nodes.forEach(n => {
@@ -1083,16 +1123,16 @@ async function renderTitles(data) {
             tooltip_t.innerHTML = html;
             tooltip_t.classList.add('visible');
 
-            // Position top-left of the text bounding box
+            // Position just above the text
             const containerRect = container.getBoundingClientRect();
             const svgEl = document.getElementById('graph');
             const pt = svgEl.createSVGPoint();
-            pt.x = d.x; pt.y = d.y - (d._bboxH || 14) / 2;
+            pt.x = d.x; pt.y = d.y;
             const ctm = g.node().getCTM();
             if (ctm) {
                 const sp = pt.matrixTransform(ctm);
                 tooltip_t.style.left = (sp.x - containerRect.left) + 'px';
-                tooltip_t.style.top = (sp.y - containerRect.top - tooltip_t.offsetHeight - 6) + 'px';
+                tooltip_t.style.top = (sp.y - containerRect.top - tooltip_t.offsetHeight - 2) + 'px';
             }
         }
 
@@ -1728,12 +1768,12 @@ async function renderTerritory(data) {
             const containerRect = container.getBoundingClientRect();
             const svgEl = document.getElementById('graph');
             const pt = svgEl.createSVGPoint();
-            pt.x = d.x; pt.y = d.y - (d._bboxH || 14) / 2;
+            pt.x = d.x; pt.y = d.y;
             const ctm = g.node().getCTM();
             if (ctm) {
                 const sp = pt.matrixTransform(ctm);
                 tooltip_t.style.left = (sp.x - containerRect.left) + 'px';
-                tooltip_t.style.top = (sp.y - containerRect.top - tooltip_t.offsetHeight - 6) + 'px';
+                tooltip_t.style.top = (sp.y - containerRect.top - tooltip_t.offsetHeight - 2) + 'px';
             }
         }
 
@@ -1984,7 +2024,7 @@ function renderDetail(node) {
         <button class="action-btn" id="reprocessBtn" onclick="reprocessNode('${node.id}')">
             <i data-feather="refresh-cw"></i> ${t('reprocess')}
         </button>
-        <button class="action-btn primary" onclick="searchRelatedNews('${safeName}')">
+        <button class="action-btn" onclick="searchRelatedNews('${safeName}')">
             <i data-feather="search"></i> ${t('searchRelatedNews')}
         </button>
         ${label === 'Actor' ? `<button class="action-btn" id="enrichBtn" onclick="enrichNode('${node.id}', '${safeName}')">
@@ -2040,39 +2080,47 @@ function renderConnections(node) {
     html += `<h3>${t('detail.connections')} (${connections.length})</h3>`;
     html += `<div class="conn-columns">`;
 
-    for (const type of typeOrder) {
-        const conns = byType[type];
-        if (!conns || !conns.length) continue;
+    const COLLAPSE_THRESHOLD = 5;
+
+    function renderConnColumn(type, conns) {
+        // Sort events by date descending (newest first)
+        if (type === 'Event' || type === 'Evento') {
+            conns.sort((a, b) => (b.node.date || '').localeCompare(a.node.date || ''));
+        }
+        const collapsed = conns.length > COLLAPSE_THRESHOLD;
         const largeClass = conns.length > 4 ? ' conn-large' : '';
-        html += `<div class="conn-column${largeClass}" data-type="${type}">
-            <div class="conn-column-label">${nodeDot(type, type)} ${typeLabels[type] || type} <span class="conn-count">${conns.length}</span></div>`;
+        let h = `<div class="conn-column${largeClass}${collapsed ? ' collapsed' : ''}" data-type="${type}">
+            <div class="conn-column-label" onclick="this.parentElement.classList.toggle('collapsed')">
+                ${nodeDot(type, type)} ${typeLabels[type] || type} <span class="conn-count">${conns.length}</span>
+                ${collapsed ? '<span class="conn-chevron"></span>' : ''}
+            </div>
+            <div class="conn-items">`;
         for (const c of conns) {
             const n = c.node;
             const edgeLabel = tEdge(c.edge.type);
             const role = c.edge.role ? ` — ${c.edge.role}` : '';
-            html += `<div class="conn-item" onclick="navigateTo('${n.id}')" title="${edgeLabel}${role}">
+            const dateStr = ((type === 'Event' || type === 'Evento') && n.date && n.date !== 'null' && n.date !== '')
+                ? `<span class="conn-date">${formatDate(n.date)}</span>` : '';
+            h += `<div class="conn-item" onclick="navigateTo('${n.id}')" title="${edgeLabel}${role}">
                 <span class="conn-name">${n.name || n.id}</span>
+                ${dateStr}
                 <span class="conn-edge-tag">${edgeLabel}</span>
             </div>`;
         }
-        html += `</div>`;
+        h += `</div></div>`;
+        return h;
+    }
+
+    for (const type of typeOrder) {
+        const conns = byType[type];
+        if (!conns || !conns.length) continue;
+        html += renderConnColumn(type, conns);
     }
 
     // Catch any types not in typeOrder
     for (const [type, conns] of Object.entries(byType)) {
         if (typeOrder.includes(type)) continue;
-        const largeClass = conns.length > 4 ? ' conn-large' : '';
-        html += `<div class="conn-column${largeClass}" data-type="${type}">
-            <div class="conn-column-label">${nodeDot(type, type)} ${typeLabels[type] || type} <span class="conn-count">${conns.length}</span></div>`;
-        for (const c of conns) {
-            const n = c.node;
-            const edgeLabel = tEdge(c.edge.type);
-            html += `<div class="conn-item" onclick="navigateTo('${n.id}')" title="${edgeLabel}">
-                <span class="conn-name">${n.name || n.id}</span>
-                <span class="conn-edge-tag">${edgeLabel}</span>
-            </div>`;
-        }
-        html += `</div>`;
+        html += renderConnColumn(type, conns);
     }
 
     html += `</div>`;
@@ -2819,13 +2867,20 @@ function toggleProcessPanel() {
 
 async function refreshProcessStatus() {
     try {
-        const res = await fetch(`${API}/api/ingest/status`);
-        const s = await res.json();
+        const [ingestRes, healthRes] = await Promise.all([
+            fetch(`${API}/api/ingest/status`),
+            fetch(`${API}/api/graph/health`)
+        ]);
+        const s = await ingestRes.json();
+        const h = await healthRes.json();
         const total = s.pending + s.processed;
         const pct = total > 0 ? Math.round((s.processed / total) * 100) : 0;
 
         document.getElementById('processBar').style.width = `${pct}%`;
+
+        // News/ingestion stats
         document.getElementById('processDetails').innerHTML = `
+            <div class="process-section-label">${t('graph.news')}</div>
             <div class="process-stat">
                 <span class="process-stat-value">${s.processed}</span>
                 <span class="process-stat-label">${t('ingest.status.processed')}</span>
@@ -2843,7 +2898,76 @@ async function refreshProcessStatus() {
                 <span class="process-stat-label">${t('process.total')}</span>
             </div>
         `;
+
+        // Graph health stats
+        document.getElementById('graphHealthDetails').innerHTML = `
+            <div class="process-section-label">${t('graph.section')}</div>
+            <div class="process-stat">
+                <span class="process-stat-value">${h.total_nodes?.toLocaleString() || 0}</span>
+                <span class="process-stat-label">${t('graph.nodes')}</span>
+            </div>
+            <div class="process-stat">
+                <span class="process-stat-value">${h.total_edges?.toLocaleString() || 0}</span>
+                <span class="process-stat-label">${t('graph.edges')}</span>
+            </div>
+            <div class="process-stat ${h.orphans > 0 ? 'warn' : ''}">
+                <span class="process-stat-value">${h.orphans || 0}</span>
+                <span class="process-stat-label">${t('graph.orphans')}</span>
+            </div>
+            <div class="process-stat ${h.events_no_date > 10 ? 'warn' : ''}">
+                <span class="process-stat-value">${h.events_no_date || 0}</span>
+                <span class="process-stat-label">${t('graph.noDate')}</span>
+            </div>
+            <div class="process-stat">
+                <span class="process-stat-value">${h.news_total?.toLocaleString() || 0}</span>
+                <span class="process-stat-label">${t('graph.news')}</span>
+            </div>
+            <div class="process-stat">
+                <span class="process-stat-value">${h.news_sources || 0}</span>
+                <span class="process-stat-label">${t('graph.sources')}</span>
+            </div>
+        `;
+
+        // Update prune button label
+        const pruneLabel = document.getElementById('pruneBtnLabel');
+        if (pruneLabel) pruneLabel.textContent = t('graph.prune');
     } catch {}
+}
+
+async function pruneGraph() {
+    const btn = document.getElementById('pruneBtn');
+    btn.disabled = true;
+    btn.innerHTML = `<i data-feather="loader"></i> ${t('graph.pruning')}`;
+    if (typeof feather !== 'undefined') feather.replace();
+
+    try {
+        const res = await fetch(`${API}/api/graph/prune`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                actions: ['orphans', 'mistyped', 'thin_events', 'thin_actors'],
+                dry_run: false
+            })
+        });
+        const result = await res.json();
+        const removed = result.removed?.length || 0;
+        const fixed = result.fixed?.length || 0;
+
+        btn.innerHTML = `<i data-feather="check"></i> ${removed} ${t('graph.pruned')}, ${fixed} ${t('graph.fixed')}`;
+        if (typeof feather !== 'undefined') feather.replace();
+
+        // Refresh stats after prune
+        setTimeout(() => {
+            refreshProcessStatus();
+            btn.disabled = false;
+            btn.innerHTML = `<i data-feather="scissors"></i> ${t('graph.prune')}`;
+            if (typeof feather !== 'undefined') feather.replace();
+        }, 3000);
+    } catch (err) {
+        btn.disabled = false;
+        btn.innerHTML = `<i data-feather="scissors"></i> ${t('graph.prune')}`;
+        if (typeof feather !== 'undefined') feather.replace();
+    }
 }
 
 async function fetchNewRSS() {
@@ -3200,17 +3324,6 @@ function stopConsoleStream() {
         consoleEventSource.close();
         consoleEventSource = null;
     }
-}
-
-// --- Helpers ---
-
-function formatDate(str) {
-    if (!str) return '';
-    try {
-        const d = new Date(str);
-        const locale = currentLang === 'es' ? 'es-CL' : 'en-US';
-        return d.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    } catch { return str; }
 }
 
 // --- Sources panel ---
