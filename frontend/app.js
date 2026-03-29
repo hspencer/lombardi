@@ -127,7 +127,7 @@ async function init() {
     setupSplitHandle();
     setupDetailClose();
     // Preload geo data for map backdrop
-    loadGeoData();
+    await loadGeoData();
     // Landing: random focal
     await navigateTo(null);
 }
@@ -202,10 +202,11 @@ function initTheme() {
 
 function setDegree(deg) {
     currentDegree = deg;
-    document.getElementById('degreeValue').textContent = deg;
+    document.querySelectorAll('.degree-btn').forEach(b => {
+        b.classList.toggle('active', +b.dataset.deg === deg);
+    });
     if (lastEgoData) {
         applyVisibilityFilter();
-        // Update timeline range for new degree
         if (typeof Timeline !== 'undefined') Timeline.update(lastEgoData);
     }
 }
@@ -393,8 +394,7 @@ async function renderEgo(data) {
 
     g = svg.append('g');
 
-    // Map backdrop inside g (moves with zoom/pan)
-    if (territoryEnabled) drawMapBackdrop(g, width, height);
+    // Map backdrop — drawn after geoResolve if territory is enabled (to fit actual data bounds)
 
     // Zoom
     const zoomBehavior = d3.zoom()
@@ -414,11 +414,35 @@ async function renderEgo(data) {
     nodes.forEach(n => { n._connectionCount = connCount[n.id] || 0; });
 
     // Geo-resolve for territorial gravity
-    if (territoryEnabled && _geoCentroids) geoResolve(nodes, edges);
+    if (territoryEnabled && _geoCentroids) {
+        geoResolve(nodes, edges);
+        // Compute bounds from actual node geo positions to fit projection
+        const geoNodes = nodes.filter(n => n._geo);
+        let fitBounds = null;
+        if (geoNodes.length > 1) {
+            const lats = geoNodes.map(n => n._geo.lat);
+            const lons = geoNodes.map(n => n._geo.lon);
+            const pad = 10;
+            fitBounds = {
+                type: "Feature",
+                geometry: {
+                    type: "Polygon",
+                    coordinates: [[
+                        [Math.min(...lons) - pad, Math.min(...lats) - pad],
+                        [Math.max(...lons) + pad, Math.min(...lats) - pad],
+                        [Math.max(...lons) + pad, Math.max(...lats) + pad],
+                        [Math.min(...lons) - pad, Math.max(...lats) + pad],
+                        [Math.min(...lons) - pad, Math.min(...lats) - pad]
+                    ]]
+                }
+            };
+        }
+        drawMapBackdrop(g, width, height, fitBounds);
+    }
 
-    // Pin focal to center
+    // Pin focal to center (unless territory mode — let geo decide position)
     const focalNode = nodes.find(n => n.id === focalId);
-    if (focalNode) {
+    if (focalNode && !territoryEnabled) {
         focalNode.fx = cx;
         focalNode.fy = cy;
     }
@@ -673,15 +697,15 @@ async function renderEgo(data) {
     simulation = d3.forceSimulation(nodes)
         .force('link', d3.forceLink(edges)
             .id(d => d.id)
-            .distance(d => edgeVisual(d.type).force_distance || 100)
+            .distance(d => (edgeVisual(d.type).force_distance || 100) * (territoryEnabled ? 2 : 1))
             .strength(d => {
-                if (d.type === 'CONTRADICE') return 0.05; // Weak — they repel via charge
-                if (d.type === 'SOSTIENE') return 0.8;
-                return 0.4;
+                const base = d.type === 'CONTRADICE' ? 0.05 : d.type === 'SOSTIENE' ? 0.8 : 0.4;
+                return territoryEnabled ? base * 0.1 : base;
             })
         )
         .force('charge', d3.forceManyBody()
             .strength(d => {
+                if (territoryEnabled) return -20;
                 if (d.id === focalId) return -500;
                 return chargeMap[d.label] || -80;
             })
@@ -702,13 +726,14 @@ async function renderEgo(data) {
                 t.vy += (dy / dist) * force;
             });
         })
-        .force('center', d3.forceCenter(cx, cy).strength(0.02))
-        .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 4))
+        .force('center', territoryEnabled ? null : d3.forceCenter(cx, cy).strength(0.02))
+        .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + (territoryEnabled ? 20 : 4)))
         .force('geo-anchor', (territoryEnabled && _mapProjection && _geoCentroids) ? (alpha => {
             nodes.forEach(n => {
                 if (!n._geo) return;
                 const [tx, ty] = _mapProjection([n._geo.lon, n._geo.lat]);
-                const strength = n.id === focalId ? 0.05 : 0.12;
+                // Strong geographic pull — position nodes at their geo location
+                const strength = 0.3 + 0.7 * alpha;
                 n.vx += (tx - n.x) * strength;
                 n.vy += (ty - n.y) * strength;
             });
@@ -1170,15 +1195,13 @@ async function renderTitles(data) {
             .distance(d => (edgeVisual(d.type).force_distance || 100) * (panoramaMode ? 0.8 : 1.4))
             .strength(panoramaMode ? 0.5 : 0.25))
         .force('charge', d3.forceManyBody().strength(panoramaMode ? -80 : -120))
-        .force('center', d3.forceCenter(cx, cy).strength(panoramaMode ? 0.2 : 0.01))
+        .force('center', (territoryEnabled ? null : d3.forceCenter(cx, cy).strength(panoramaMode ? 0.2 : 0.01)))
         .force('rectCollide', forceRectCollide())
         .force('geo-anchor', (territoryEnabled && _mapProjection && _geoCentroids) ? (alpha => {
             nodes.forEach(n => {
                 if (!n._geo) return;
                 const [tx, ty] = _mapProjection([n._geo.lon, n._geo.lat]);
-                // Elastic anchor: nodes ARE their territory
-                // Strength 0.4+ means geography dominates, links flex around it
-                const strength = n.id === focalId ? 0.05 : 0.12;
+                const strength = 0.3 + 0.7 * alpha;
                 n.vx += (tx - n.x) * strength;
                 n.vy += (ty - n.y) * strength;
             });
@@ -1243,12 +1266,12 @@ const EUROPE_BOUNDS = {
     }
 };
 
-function drawMapBackdrop(gEl, width, height) {
+function drawMapBackdrop(gEl, width, height, fitBounds) {
     if (!_worldTopo) return;
 
     const worldGeo = topojson.feature(_worldTopo, _worldTopo.objects.countries);
     const projection = d3.geoNaturalEarth1()
-        .fitSize([width, height], EUROPE_BOUNDS);
+        .fitSize([width, height], fitBounds || EUROPE_BOUNDS);
     _mapProjection = projection;
     const pathGen = d3.geoPath(projection);
 
@@ -1770,8 +1793,8 @@ async function renderTerritory(data) {
                 const radius = 12 + Math.sqrt(idx) * 18;
                 const targetX = tx + Math.cos(angle) * radius;
                 const targetY = ty + Math.sin(angle) * radius;
-                n.vx += (targetX - n.x) * alpha * 0.08;
-                n.vy += (targetY - n.y) * alpha * 0.08;
+                n.vx += (targetX - n.x) * alpha * 0.05;
+                n.vy += (targetY - n.y) * alpha * 0.05;
             });
         });
         simulation.alpha(0.3).restart();

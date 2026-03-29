@@ -364,43 +364,49 @@ body {
     z-index: 5;
     display: flex;
     align-items: center;
-    gap: 1px;
-    background: var(--border-default);
-    border-radius: 4px;
-    overflow: hidden;
+    gap: var(--space-sm);
     font-family: var(--font-sans);
     text-transform: uppercase;
     letter-spacing: .2ex;
 }
 
+/* --- Degree 3-state switch --- */
 .degree-control {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 var(--space-sm);
-    background: var(--bg-surface);
+    gap: 2px;
 }
 .degree-control label {
     font-size: var(--font-size-xs);
     color: var(--ink-muted);
     white-space: nowrap;
+    margin-right: 4px;
 }
-.degree-control input[type="range"] {
-    width: 50px;
-    accent-color: var(--accent);
-    cursor: pointer;
-}
-.degree-control span {
+.degree-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 4px 6px;
     font-size: var(--font-size-xs);
+    font-family: var(--font-sans);
+    text-transform: uppercase;
+    letter-spacing: .2ex;
+    color: var(--ink-muted);
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease-default);
+}
+.degree-btn:hover { color: var(--ink-primary); }
+.degree-btn.active {
     color: var(--ink-primary);
     font-weight: 600;
-    min-width: 12px;
+    border-bottom-color: var(--accent);
 }
 
 .view-toggle {
-    background: var(--bg-surface);
+    background: none;
     color: var(--ink-muted);
     border: none;
+    border-bottom: 2px solid transparent;
     padding: 4px var(--space-md);
     font-size: var(--font-size-xs);
     font-family: inherit;
@@ -412,9 +418,9 @@ body {
 
 .view-toggle:hover { color: var(--ink-primary); }
 .view-toggle.active {
-    background: var(--bg-surface-alt);
     color: var(--ink-primary);
     font-weight: 600;
+    border-bottom-color: var(--accent);
 }
 
 /* --- Graph container --- */

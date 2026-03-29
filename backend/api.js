@@ -785,7 +785,25 @@ async function handleAPI(req, res) {
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive'
         });
+        const _discoverStart = Date.now();
+        const _discoverLog = [];
+        function log(msg) {
+            const elapsed = ((Date.now() - _discoverStart) / 1000).toFixed(1);
+            const line = `[Discover ${id}] ${elapsed}s — ${msg}`;
+            _discoverLog.push(line);
+            console.log(line);
+        }
         function emit(type, data) {
+            if (type === 'discovered') {
+                const target = data.targetNode?.name || data.edge?.target || '?';
+                const edgeType = data.edge?.type || '?';
+                const reason = data.reason || '';
+                log(`+ ${edgeType} → ${target} (${reason})`);
+            } else if (type === 'status') {
+                log(data.message);
+            } else if (type === 'error') {
+                log(`ERROR: ${data.message}`);
+            }
             res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
         }
 
@@ -806,14 +824,177 @@ async function handleAPI(req, res) {
             const connectedIds = new Set(neighbors.map(n => n.m.id));
             connectedIds.add(id);
 
-            // 3. Get ALL nodes in the graph not connected to focal
+            // 3. NEWS-BASED DISCOVERY — re-extract from related articles
+            // Find news that mention this node (by event source_url or text match)
+            emit('status', { message: 'Buscando noticias relacionadas...' });
+
+            // Collect source_urls from events connected to this actor
+            const eventUrls = [];
+            if (!focal.event_type) {
+                // Actor: get its events' source_urls
+                const events = await ageQuery(`
+                    MATCH (a {id: '${esc(id)}'})-[:PARTICIPA]->(e:Evento)
+                    RETURN e
+                `).catch(() => []) || [];
+                events.forEach(e => { if (e.source_url) eventUrls.push(e.source_url); });
+            } else {
+                // Evento: use its own source_url
+                if (focal.source_url) eventUrls.push(focal.source_url);
+            }
+
+            // Also search news_raw by name/aliases in title+description
+            const aliasDataForSearch = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+            const focalEntrySearch = aliasDataForSearch.entities[id];
+            const searchTerms = focalEntrySearch
+                ? [focalEntrySearch.canonical, ...(focalEntrySearch.aliases || [])]
+                : [focal.name || id.replace(/-/g, ' ')];
+            const searchPattern = searchTerms.map(t => t.replace(/'/g, "''")).join('|');
+
+            let relatedNews = [];
+            try {
+                const newsResult = await pool.query(`
+                    SELECT id, source_name, source_lang, title, link, description, pub_date
+                    FROM news_raw
+                    WHERE (title ~* $1 OR description ~* $1)
+                    ORDER BY pub_date DESC LIMIT 20
+                `, [searchPattern]);
+                relatedNews = newsResult.rows;
+                log(`SQL búsqueda con patrón: ${searchPattern.slice(0, 80)}`);
+            } catch (err) {
+                log(`ERROR buscando en news_raw: ${err.message}`);
+            }
+
+            // Add news found by event source_urls (dedup by link)
+            const seenLinks = new Set(relatedNews.map(n => n.link));
+            for (const url of eventUrls) {
+                if (seenLinks.has(url)) continue;
+                try {
+                    const r = await pool.query('SELECT * FROM news_raw WHERE link = $1', [url]);
+                    if (r.rows.length) { relatedNews.push(r.rows[0]); seenLinks.add(url); }
+                } catch {}
+            }
+
+            emit('status', { message: `${relatedNews.length} noticias encontradas` });
+
+            // Re-extract each news article with focal context
+            if (relatedNews.length > 0) {
+                const { extractFromNewsFast, extractFromNews } = require('./extractor.js');
+                let newsProcessed = 0;
+
+                for (const newsItem of relatedNews.slice(0, 15)) {
+                    newsProcessed++;
+                    emit('status', { message: `Extrayendo ${newsProcessed}/${Math.min(relatedNews.length, 15)}: ${(newsItem.title || '').slice(0, 50)}...` });
+
+                    let extraction;
+                    try {
+                        extraction = await extractFromNewsFast(newsItem).catch(e => {
+                            log(`  Claude API falló: ${e.message}`);
+                            return null;
+                        });
+                        if (!extraction) {
+                            extraction = await extractFromNews(newsItem).catch(e => {
+                                log(`  Ollama falló: ${e.message}`);
+                                return null;
+                            });
+                        }
+                    } catch (e) { log(`  Extracción falló: ${e.message}`); continue; }
+                    if (!extraction?.event) { log(`  Sin evento extraído de: ${(newsItem.title || '').slice(0, 50)}`); continue; }
+
+                    const evt = extraction.event;
+
+                    // Create/merge Evento node
+                    await ageQuery(`
+                        MERGE (e:Evento {id: '${esc(evt.id)}'})
+                        SET e.name = '${esc(evt.name)}',
+                            e.event_type = '${esc(evt.event_type)}',
+                            e.date = '${esc(evt.date || '')}',
+                            e.is_disputed = ${evt.is_disputed || false},
+                            e.evidence_quote = '${esc(evt.evidence_quote || '')}',
+                            e.source = '${esc(newsItem.source_name || '')}',
+                            e.source_url = '${esc(newsItem.link || '')}',
+                            e.extraction_confidence = ${parseFloat(evt.extraction_confidence) || 0}
+                        RETURN e
+                    `).catch(() => {});
+
+                    // Create actors + PARTICIPA edges + identify locations
+                    for (const actor of (extraction.actors || [])) {
+                        await ageQuery(`
+                            MERGE (a:Actor {id: '${esc(actor.id)}'})
+                            SET a.name = '${esc(actor.name)}',
+                                a.type = '${esc(actor.type)}',
+                                a.description = '${esc(actor.description || '')}'
+                            RETURN a
+                        `).catch(() => {});
+
+                        await ageQuery(`
+                            MATCH (a:Actor {id: '${esc(actor.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                            MERGE (a)-[r:PARTICIPA]->(e)
+                            SET r.role = '${esc(actor.role || '')}',
+                                r.impact_direction = '${esc(actor.impact_direction || 'neutral')}'
+                            RETURN r
+                        `).catch(() => {});
+
+                        // Track new nodes for the frontend
+                        if (!connectedIds.has(actor.id)) {
+                            connectedIds.add(actor.id);
+                            emit('discovered', {
+                                edge: { source: actor.id, target: evt.id, type: 'PARTICIPA', role: actor.role || '' },
+                                targetNode: { id: actor.id, name: actor.name, type: actor.type, label: 'Actor' },
+                                reason: `extraído de noticia: ${(newsItem.title || '').slice(0, 40)}`
+                            });
+                        }
+                    }
+
+                    // Actor-actor relations (PERTENECE_A, UBICADO_EN)
+                    const VALID_RELS = { PERTENECE_A: true, UBICADO_EN: true };
+                    for (const rel of (extraction.actor_relations || [])) {
+                        const relType = String(rel.relation || '').toUpperCase().replace(/[^A-Z_]/g, '');
+                        if (!VALID_RELS[relType]) continue;
+                        await ageQuery(`
+                            MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'})
+                            MERGE (a)-[:${relType}]->(b)
+                            RETURN a, b
+                        `).catch(() => {});
+                    }
+
+                    // Ensure focal node is linked to this event
+                    if (!focal.event_type) {
+                        // Focal is Actor — check if extraction mentions it, otherwise link contextually
+                        const mentionsFocal = (extraction.actors || []).some(a =>
+                            a.id === id || a.name?.toLowerCase() === focal.name?.toLowerCase()
+                        );
+                        if (!mentionsFocal) {
+                            await ageQuery(`
+                                MATCH (a {id: '${esc(id)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                                MERGE (a)-[r:PARTICIPA]->(e)
+                                SET r.role = 'mencionado en contexto'
+                                RETURN r
+                            `).catch(() => {});
+                        }
+                    }
+
+                    // Track event as discovered
+                    if (!connectedIds.has(evt.id)) {
+                        connectedIds.add(evt.id);
+                        emit('discovered', {
+                            edge: { source: id, target: evt.id, type: 'PARTICIPA', role: 'contexto' },
+                            targetNode: { id: evt.id, name: evt.name, type: evt.event_type, label: 'Evento' },
+                            reason: `evento extraído de ${newsItem.source_name || 'noticia'}`
+                        });
+                    }
+                }
+
+                emit('status', { message: `${newsProcessed} noticias procesadas, actualizando grafo...` });
+            }
+
+            // 4. Get ALL nodes in the graph not connected to focal (refresh after news extraction)
             const allNodes = await ageQuery(`MATCH (n) WHERE n.id <> '${esc(id)}' RETURN n`);
             const unconnected = allNodes.filter(n => !connectedIds.has(n.id));
 
             emit('status', { message: `${connectedIds.size - 1} conexiones actuales, ${unconnected.length} nodos sin vínculo directo` });
 
-            // 4. Alias-based discovery — find synonym matches
-            const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+            // 5. Alias-based discovery — find synonym matches
+            const aliasData = aliasDataForSearch;
             const focalEntry = aliasData.entities[id];
             const focalNames = focalEntry
                 ? [focalEntry.canonical, ...(focalEntry.aliases || [])].map(s => s.toLowerCase())
@@ -854,7 +1035,7 @@ async function handleAPI(req, res) {
                 emit('status', { message: `${aliasMatches.length} sinónimos vinculados` });
             }
 
-            // 5. Co-occurrence: find nodes that share events with focal's events
+            // 6. Co-occurrence: find nodes that share events with focal's events
             let cooccurrence = [];
             if (focal.label === 'Actor' || !focal.event_type) {
                 const shared = await ageQuery2(`
@@ -884,7 +1065,7 @@ async function handleAPI(req, res) {
                 }
             }
 
-            // 6. LLM-based discovery — ask Claude for semantic relationships
+            // 7. LLM-based discovery — ask Claude for semantic relationships
             const apiKey = process.env.CLAUDE_API_KEY;
             let llmDiscovered = [];
 
@@ -964,7 +1145,7 @@ If no relationships are warranted, return [].`;
                 }
             }
 
-            // 7. Generative LLM phase — propose NEW entities not yet in the graph
+            // 8. Generative LLM phase — propose NEW entities not yet in the graph
             let generatedNodes = [];
             if (apiKey) {
                 emit('status', { message: 'Buscando entidades conocidas no representadas...' });
@@ -1051,7 +1232,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
                 }
             }
 
-            // 8. Write LLM-discovered edges to graph (existing nodes)
+            // 9. Write LLM-discovered edges to graph (existing nodes)
             let created = 0;
             for (const rel of llmDiscovered) {
                 if (!rel.source || !rel.target || !rel.type) continue;

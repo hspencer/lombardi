@@ -246,5 +246,53 @@
     "lang": "es",
     "region": "Argentina / global",
     "enabled": true
+  },
+  {
+    "id": "cooperativa-cl",
+    "name": "Cooperativa.cl",
+    "url": "https://www.cooperativa.cl/noticias/site/tax/port/all/rss____1.xml",
+    "lang": "es",
+    "region": "Chile",
+    "enabled": true
+  },
+  {
+    "id": "la-tercera",
+    "name": "La Tercera",
+    "url": "https://www.latercera.com/arcio/rss/",
+    "lang": "es",
+    "region": "Chile",
+    "enabled": true
+  },
+  {
+    "id": "the-clinic",
+    "name": "The Clinic",
+    "url": "https://theclinic.cl/feed",
+    "lang": "es",
+    "region": "Chile",
+    "enabled": true
+  },
+  {
+    "id": "el-rancaguino",
+    "name": "El Rancagüino",
+    "url": "https://elrancaguino.cl/feed",
+    "lang": "es",
+    "region": "O'Higgins, Chile",
+    "enabled": true
+  },
+  {
+    "id": "la-discusion",
+    "name": "La Discusión",
+    "url": "https://ladiscusion.cl/feed",
+    "lang": "es",
+    "region": "Ñuble, Chile",
+    "enabled": true
+  },
+  {
+    "id": "la-nacion-cl",
+    "name": "La Nación",
+    "url": "https://www.lanacion.cl/feed",
+    "lang": "es",
+    "region": "Chile / global",
+    "enabled": true
   }
 ]

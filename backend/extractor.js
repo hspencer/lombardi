@@ -95,9 +95,10 @@ async function extractFromNews(newsItem) {
     });
 
     const data = await response.json();
+    if (data.error) throw new Error(`Ollama error: ${data.error}`);
     const text = (data.response || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in response');
+    if (!jsonMatch) throw new Error('No JSON in Ollama response');
     return JSON.parse(jsonMatch[0]);
 }
 
@@ -110,7 +111,8 @@ async function extractFromNewsFast(newsItem) {
 
     const schema = loadSchema();
     const prompt = buildPrompt(schema);
-    const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name || ''} (${newsItem.source_lang || ''})\nDate: ${newsItem.pubDate || newsItem.pub_date || ''}\nContent: ${(newsItem.description || '').slice(0, 3000)}`;
+    const content = newsItem.description || newsItem.summary || '';
+    const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name || ''} (${newsItem.source_lang || ''})\nDate: ${newsItem.pubDate || newsItem.pub_date || ''}\nContent: ${content.slice(0, 4000)}`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',

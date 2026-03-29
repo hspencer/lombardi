@@ -136,7 +136,8 @@ async function initDB() {
 // --- Ollama ---
 
 async function extract(newsItem) {
-    const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name} (${newsItem.source_lang})\nDescription: ${newsItem.description}`;
+    const content = newsItem.description || newsItem.summary || '';
+    const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name} (${newsItem.source_lang})\nContent: ${content.slice(0, 4000)}`;
 
     const response = await fetch(OLLAMA_URL, {
         method: 'POST',
@@ -155,6 +156,8 @@ async function extract(newsItem) {
     });
 
     const data = await response.json();
+    if (data.error) throw new Error(`Ollama error: ${data.error}`);
+    if (!data.response) throw new Error(`Ollama: respuesta vacía (modelo: ${EXTRACTOR_MODEL})`);
     let raw = data.response.trim();
     // Strip qwen3 <think>...</think> blocks if present
     raw = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
