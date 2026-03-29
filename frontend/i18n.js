@@ -8,6 +8,7 @@ const TRANSLATIONS = {
         // Toolbar
         'toolbar.nodes': 'Nodos',
         'toolbar.titles': 'Títulos',
+        'toolbar.territory': 'Territorio',
         'toolbar.degree': 'Grado',
 
         // Tabs
@@ -44,6 +45,8 @@ const TRANSLATIONS = {
         'detail.aliases': 'Aliases',
         'detail.aliases.none': 'Sin aliases',
         'detail.aliases.add': 'Agregar alias o nombre de otro nodo...',
+        'detail.translate': 'Traducir',
+        'detail.translating': 'Traduciendo...',
         'detail.enrich': 'Enriquecer desde Wikidata',
         'detail.enrich.loading': 'Consultando Wikidata...',
         'detail.enrich.notfound': 'No se encontró en Wikidata.',
@@ -86,22 +89,6 @@ const TRANSLATIONS = {
         'merge.confirm': 'Fusionar',
         'merge.cancel': 'Cancelar',
 
-        // Node types
-        'type.Person': 'Persona',
-        'type.Location': 'Lugar',
-        'type.Organization': 'Organización',
-        'type.Object': 'Objeto',
-        'type.Event': 'Evento',
-
-        // Edge types
-        'edge.PARTICIPA': 'Participa',
-        'edge.CAUSA': 'Causa',
-        'edge.CONTRADICE': 'Contradice',
-        'edge.COMPLEMENTA': 'Complementa',
-        'edge.PERTENECE_A': 'Pertenece a',
-        'edge.UBICADO_EN': 'Ubicado en',
-        'edge.RELACIONADO': 'Relacionado',
-
         // Ingest status
         'ingest.status.pending': 'Pendientes',
         'ingest.status.processed': 'Procesadas',
@@ -109,11 +96,24 @@ const TRANSLATIONS = {
         'ingest.unprocessed': 'Sin procesar',
 
         // Process panel
-        'process.title': 'Procesamiento',
+        'process.title': 'Estado del sistema',
         'process.fetch': 'Buscar RSS nuevos',
         'process.fetching': 'Buscando...',
         'process.console': 'Consola',
         'process.total': 'Total',
+        'graph.nodes': 'Nodos',
+        'graph.edges': 'Aristas',
+        'graph.orphans': 'Huérfanos',
+        'graph.degree1': 'Grado 1',
+        'graph.noDate': 'Sin fecha',
+        'graph.mistyped': 'Mal tipados',
+        'graph.sources': 'Fuentes',
+        'graph.prune': 'Podar grafo',
+        'graph.pruning': 'Podando...',
+        'graph.pruned': 'eliminados',
+        'graph.fixed': 'corregidos',
+        'graph.section': 'Grafo',
+        'graph.news': 'Noticias',
 
         // Reprocess
         'reprocess': 'Reprocesar',
@@ -125,8 +125,15 @@ const TRANSLATIONS = {
         'reprocess.updating': 'Actualizando grafo...',
         'reprocess.done': 'noticias reprocesadas',
 
-        // Web search
+        // Web search & create
         'searchWeb': 'Buscar noticias sobre',
+        'createNode': 'Crear nodo',
+        'createNode.title': 'Nuevo nodo',
+        'createNode.name': 'Nombre',
+        'createNode.lang': 'Idioma',
+        'createNode.type': 'Tipo',
+        'createNode.create': 'Crear',
+        'createNode.cancel': 'Cancelar',
         'searchingWeb': 'Buscando noticias sobre',
         'noWebResults': 'No se encontraron noticias.',
         'webResults': 'Noticias encontradas para',
@@ -151,6 +158,7 @@ const TRANSLATIONS = {
 
         'toolbar.nodes': 'Nodes',
         'toolbar.titles': 'Titles',
+        'toolbar.territory': 'Territory',
         'toolbar.degree': 'Degree',
 
         'tab.node': 'Node',
@@ -183,6 +191,8 @@ const TRANSLATIONS = {
         'detail.aliases': 'Aliases',
         'detail.aliases.none': 'No aliases',
         'detail.aliases.add': 'Add alias or another node name...',
+        'detail.translate': 'Translate',
+        'detail.translating': 'Translating...',
         'detail.enrich': 'Enrich from Wikidata',
         'detail.enrich.loading': 'Querying Wikidata...',
         'detail.enrich.notfound': 'Not found in Wikidata.',
@@ -223,30 +233,29 @@ const TRANSLATIONS = {
         'merge.confirm': 'Merge',
         'merge.cancel': 'Cancel',
 
-        'type.Person': 'Person',
-        'type.Location': 'Location',
-        'type.Organization': 'Organization',
-        'type.Object': 'Object',
-        'type.Event': 'Event',
-
-        'edge.PARTICIPA': 'Participates',
-        'edge.CAUSA': 'Causes',
-        'edge.CONTRADICE': 'Contradicts',
-        'edge.COMPLEMENTA': 'Complements',
-        'edge.PERTENECE_A': 'Belongs to',
-        'edge.UBICADO_EN': 'Located in',
-        'edge.RELACIONADO': 'Related',
-
         'ingest.status.pending': 'Pending',
         'ingest.status.processed': 'Processed',
         'ingest.status.extractions': 'Extractions',
         'ingest.unprocessed': 'Unprocessed',
 
-        'process.title': 'Processing',
+        'process.title': 'System status',
         'process.fetch': 'Fetch new RSS',
         'process.fetching': 'Fetching...',
         'process.console': 'Console',
         'process.total': 'Total',
+        'graph.nodes': 'Nodes',
+        'graph.edges': 'Edges',
+        'graph.orphans': 'Orphans',
+        'graph.degree1': 'Degree 1',
+        'graph.noDate': 'No date',
+        'graph.mistyped': 'Mistyped',
+        'graph.sources': 'Sources',
+        'graph.prune': 'Prune graph',
+        'graph.pruning': 'Pruning...',
+        'graph.pruned': 'removed',
+        'graph.fixed': 'fixed',
+        'graph.section': 'Graph',
+        'graph.news': 'News',
 
         'reprocess': 'Reprocess',
         'reprocess.searching': 'Searching news...',
@@ -258,6 +267,13 @@ const TRANSLATIONS = {
         'reprocess.done': 'news reprocessed',
 
         'searchWeb': 'Search news about',
+        'createNode': 'Create node',
+        'createNode.title': 'New node',
+        'createNode.name': 'Name',
+        'createNode.lang': 'Language',
+        'createNode.type': 'Type',
+        'createNode.create': 'Create',
+        'createNode.cancel': 'Cancel',
         'searchingWeb': 'Searching news about',
         'noWebResults': 'No news found.',
         'webResults': 'News found for',
@@ -272,6 +288,13 @@ const TRANSLATIONS = {
         'loading.graph': 'Loading graph...'
     }
 };
+
+// Schema-driven i18n bridge
+let _schemaData = null;
+
+function setSchemaData(schema) {
+    _schemaData = schema;
+}
 
 let currentLang = 'es';
 
@@ -292,9 +315,28 @@ function t(key) {
 }
 
 function tType(type) {
-    return t(`type.${type}`) || type;
+    // Read from schema type_labels (Actor node has type_labels for Person, Organization, etc.)
+    const labels = _schemaData?.graph?.nodes?.Actor?.type_labels?.[type];
+    if (labels) return labels[currentLang] || labels.es || type;
+    // Evento node label
+    if (type === 'Event' || type === 'Evento') {
+        return _schemaData?.graph?.nodes?.Evento?.i18n?.[currentLang]?.label
+            || _schemaData?.graph?.nodes?.Evento?.i18n?.es?.label
+            || type;
+    }
+    return type;
 }
 
 function tEdge(type) {
-    return t(`edge.${type}`) || type.replace(/_/g, ' ');
+    return _schemaData?.graph?.edges?.[type]?.i18n?.[currentLang]?.label
+        || _schemaData?.graph?.edges?.[type]?.i18n?.es?.label
+        || type.replace(/_/g, ' ');
+}
+
+function tEventType(id) {
+    if (!_schemaData?.event_types) return id.replace(/_/g, ' ').toLowerCase();
+    const et = _schemaData.event_types.find(e => e.id === id);
+    if (!et) return id.replace(/_/g, ' ').toLowerCase();
+    if (currentLang === 'es') return et.label;
+    return et.i18n?.[currentLang] || et.label;
 }

@@ -84,6 +84,86 @@ async function ageQuery2(cypher, cols) {
 async function handleAPI(req, res) {
     const url = new URL(req.url, `http://localhost:${PORT}`);
 
+    // === DISPUTES: all disputed nodes + controversy edges + connected actors ===
+    if (url.pathname === '/api/disputes') {
+        const nodeMap = new Map();
+        const edgeList = [];
+
+        // 1. Disputed events/claims
+        const disputed = await ageQuery(
+            `MATCH (n) WHERE n.is_disputed = true RETURN n`
+        ).catch(() => []);
+
+        for (const v of disputed) {
+            const n = flat(v);
+            n.type = n.type || (n.label === 'Evento' ? 'Event' : n.label);
+            n._degree = 0;
+            nodeMap.set(n.id, n);
+        }
+
+        // 2. All controversy edges (CONTRADICE, DESMIENTE, COMPLEMENTA, CAUSA) + their endpoints
+        const controversyEdges = await ageQuery2(
+            `MATCH (a)-[r]->(b) WHERE type(r) IN ['CONTRADICE', 'DESMIENTE', 'COMPLEMENTA', 'CAUSA'] RETURN a, r, b`,
+            ['a', 'r', 'b']
+        ).catch(() => []);
+
+        for (const row of controversyEdges) {
+            const a = flat(row.a);
+            const r = row.r?.properties || {};
+            const b = flat(row.b);
+            const rtype = row.r?.label || 'CONTRADICE';
+
+            if (a.id && !nodeMap.has(a.id)) {
+                a._degree = 0;
+                a.type = a.type || (a.label === 'Evento' ? 'Event' : a.label);
+                nodeMap.set(a.id, a);
+            }
+            if (b.id && !nodeMap.has(b.id)) {
+                b._degree = 0;
+                b.type = b.type || (b.label === 'Evento' ? 'Event' : b.label);
+                nodeMap.set(b.id, b);
+            }
+            if (a.id && b.id) {
+                edgeList.push({ source: a.id, target: b.id, type: rtype, ...r });
+            }
+        }
+
+        // 3. Actors connected to disputed/controversy nodes
+        const allIds = Array.from(nodeMap.keys()).map(id => `'${esc(id)}'`).join(',');
+        if (allIds.length > 0) {
+            const actors = await ageQuery2(
+                `MATCH (a:Actor)-[r]-(n) WHERE n.id IN [${allIds}] RETURN a, r, n`,
+                ['a', 'r', 'n']
+            ).catch(() => []);
+
+            for (const row of actors) {
+                const a = flat(row.a);
+                const r = row.r?.properties || {};
+                const n = row.n;
+                const rtype = row.r?.label || 'PARTICIPA';
+
+                if (a.id && !nodeMap.has(a.id)) {
+                    a._degree = 1;
+                    a.type = a.type || 'Person';
+                    nodeMap.set(a.id, a);
+                }
+                const nid = n.properties?.id || n.id;
+                if (a.id && nid) {
+                    edgeList.push({ source: a.id, target: nid, type: rtype, ...r });
+                }
+            }
+        }
+
+        const focalIds = disputed.map(v => flat(v).id).filter(Boolean);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            nodes: Array.from(nodeMap.values()),
+            edges: edgeList,
+            focalIds
+        }));
+        return;
+    }
+
     // === PANORAMA: N eventos recientes + actores + aristas ===
     if (url.pathname === '/api/panorama') {
         const limit = Math.min(20, Math.max(1, parseInt(url.searchParams.get('limit') || '10')));
@@ -229,25 +309,25 @@ async function handleAPI(req, res) {
             });
         }
 
-        // Expand degree by degree: each degree = one hop from previous frontier
+        // Expand degree by degree: batched single query per degree
         for (let deg = 1; deg <= maxDegree; deg++) {
-            const frontierIds = [...nodesMap.values()].filter(n => n._degree === deg - 1).map(n => esc(n.id));
-            if (frontierIds.length === 0) break;
+            const frontier = [...nodesMap.values()].filter(n => n._degree === deg - 1);
+            if (frontier.length === 0) break;
 
             const limit = deg === 1 ? 50 : deg === 2 ? 20 : 10;
-            for (const nId of frontierIds.slice(0, limit)) {
-                const neighbors = await ageQuery2(
-                    `MATCH (n1 {id: '${nId}'})-[r]-(n2) WHERE label(n2) IN ['Actor', 'Evento'] RETURN n2, r`,
-                    ['n2', 'r']
-                ).catch(err => { console.error(`Ego expand deg=${deg} nId=${nId}:`, err.message); return []; });
+            const batchIds = frontier.slice(0, limit).map(n => `'${esc(n.id)}'`).join(',');
 
-                for (const row of neighbors) {
-                    const n2 = flat(row.n2);
-                    if (!nodesMap.has(n2.id)) {
-                        nodesMap.set(n2.id, { ...n2, _degree: deg });
-                    }
-                    addEdge(row.r);
+            const neighbors = await ageQuery2(
+                `MATCH (n1)-[r]-(n2) WHERE n1.id IN [${batchIds}] AND label(n2) IN ['Actor', 'Evento'] RETURN n2, r`,
+                ['n2', 'r']
+            ).catch(err => { console.error(`Ego expand deg=${deg}:`, err.message); return []; });
+
+            for (const row of neighbors) {
+                const n2 = flat(row.n2);
+                if (!nodesMap.has(n2.id)) {
+                    nodesMap.set(n2.id, { ...n2, _degree: deg });
                 }
+                addEdge(row.r);
             }
         }
 
@@ -382,6 +462,99 @@ async function handleAPI(req, res) {
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
+        return;
+    }
+
+    // === NODE TRANSLATE: translate name + description via LLM ===
+    if (url.pathname === '/api/node/translate' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { id, lang } = body;
+        if (!id || !lang) { res.writeHead(400); res.end('{"error":"id and lang required"}'); return; }
+
+        // Fetch current node
+        const rows = await ageQuery(`MATCH (n {id: '${esc(id)}'}) RETURN n`);
+        if (!rows.length) { res.writeHead(404); res.end('{"error":"node not found"}'); return; }
+        const node = flat(rows[0]);
+
+        const apiKey = process.env.CLAUDE_API_KEY;
+        if (!apiKey) { res.writeHead(500); res.end('{"error":"no API key configured"}'); return; }
+
+        const targetLang = lang === 'es' ? 'Spanish' : 'English';
+        const fields = { name: node.name || '', description: node.description || '' };
+        if (node.evidence_quote) fields.evidence_quote = node.evidence_quote;
+
+        const llmRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+            },
+            body: JSON.stringify({
+                model: 'claude-haiku-4-5-20251001',
+                max_tokens: 512,
+                messages: [{ role: 'user', content:
+                    `Translate the following JSON values to ${targetLang}. Keep proper nouns unchanged. Return ONLY valid JSON with the same keys.\n\n${JSON.stringify(fields)}`
+                }]
+            })
+        });
+        const llmData = await llmRes.json();
+        const text = (llmData.content?.[0]?.text || '').trim();
+        let translated;
+        try {
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            translated = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        } catch(e) { translated = null; }
+
+        if (!translated) { res.writeHead(500); res.end('{"error":"translation failed"}'); return; }
+
+        // Update node in graph
+        const sets = [];
+        if (translated.name) sets.push(`n.name = '${esc(translated.name)}'`);
+        if (translated.description) sets.push(`n.description = '${esc(translated.description)}'`);
+        if (translated.evidence_quote) sets.push(`n.evidence_quote = '${esc(translated.evidence_quote)}'`);
+        if (sets.length) await ageQuery(`MATCH (n {id: '${esc(id)}'}) SET ${sets.join(', ')} RETURN n`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, translated }));
+        return;
+    }
+
+    // === NODE CREATE: create a new node ===
+    if (url.pathname === '/api/node/create' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { name, type, lang } = body;
+        if (!name) { res.writeHead(400); res.end('{"error":"name required"}'); return; }
+
+        const id = kebab(name);
+        const label = (type === 'Event' || type === 'Evento') ? 'Evento' : 'Actor';
+        const nodeType = type || 'Person';
+
+        const client = await pool.connect();
+        try {
+            await client.query("LOAD 'age'");
+            await client.query("SET search_path = ag_catalog, '$user', public");
+            await client.query(`
+                SELECT * FROM cypher('lombardi', $$
+                    MERGE (n:${label} {id: '${esc(id)}'})
+                    SET n.name = '${esc(name)}', n.type = '${esc(nodeType)}', n.lang = '${esc(lang || 'es')}'
+                    RETURN n
+                $$) as (n agtype)
+            `);
+        } finally {
+            client.release();
+        }
+
+        // Also register in aliases.json
+        const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+        if (!aliasData.entities[id]) {
+            aliasData.entities[id] = { canonical: name, type: nodeType, aliases: [] };
+            aliasData.updated_at = new Date().toISOString().slice(0, 10);
+            fs.writeFileSync(ALIASES_PATH, JSON.stringify(aliasData, null, 2));
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, id, name, type: nodeType, label }));
         return;
     }
 
@@ -785,7 +958,25 @@ async function handleAPI(req, res) {
             'Cache-Control': 'no-cache',
             'Connection': 'keep-alive'
         });
+        const _discoverStart = Date.now();
+        const _discoverLog = [];
+        function log(msg) {
+            const elapsed = ((Date.now() - _discoverStart) / 1000).toFixed(1);
+            const line = `[Discover ${id}] ${elapsed}s — ${msg}`;
+            _discoverLog.push(line);
+            console.log(line);
+        }
         function emit(type, data) {
+            if (type === 'discovered') {
+                const target = data.targetNode?.name || data.edge?.target || '?';
+                const edgeType = data.edge?.type || '?';
+                const reason = data.reason || '';
+                log(`+ ${edgeType} → ${target} (${reason})`);
+            } else if (type === 'status') {
+                log(data.message);
+            } else if (type === 'error') {
+                log(`ERROR: ${data.message}`);
+            }
             res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
         }
 
@@ -806,14 +997,180 @@ async function handleAPI(req, res) {
             const connectedIds = new Set(neighbors.map(n => n.m.id));
             connectedIds.add(id);
 
-            // 3. Get ALL nodes in the graph not connected to focal
+            // 3. NEWS-BASED DISCOVERY — re-extract from related articles
+            // Find news that mention this node (by event source_url or text match)
+            emit('status', { message: 'Buscando noticias relacionadas...' });
+
+            // Collect source_urls from events connected to this actor
+            const eventUrls = [];
+            if (!focal.event_type) {
+                // Actor: get its events' source_urls
+                const events = await ageQuery(`
+                    MATCH (a {id: '${esc(id)}'})-[:PARTICIPA]->(e:Evento)
+                    RETURN e
+                `).catch(() => []) || [];
+                events.forEach(e => { if (e.source_url) eventUrls.push(e.source_url); });
+            } else {
+                // Evento: use its own source_url
+                if (focal.source_url) eventUrls.push(focal.source_url);
+            }
+
+            // Also search news_raw by name/aliases in title+description
+            const aliasDataForSearch = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+            const focalEntrySearch = aliasDataForSearch.entities[id];
+            const searchTerms = focalEntrySearch
+                ? [focalEntrySearch.canonical, ...(focalEntrySearch.aliases || [])]
+                : [focal.name || id.replace(/-/g, ' ')];
+            const searchPattern = searchTerms.map(t => t.replace(/'/g, "''")).join('|');
+
+            let relatedNews = [];
+            try {
+                const newsResult = await pool.query(`
+                    SELECT id, source_name, source_lang, title, link, description, pub_date
+                    FROM news_raw
+                    WHERE (title ~* $1 OR description ~* $1)
+                    ORDER BY pub_date DESC LIMIT 20
+                `, [searchPattern]);
+                relatedNews = newsResult.rows;
+                log(`SQL búsqueda con patrón: ${searchPattern.slice(0, 80)}`);
+            } catch (err) {
+                log(`ERROR buscando en news_raw: ${err.message}`);
+            }
+
+            // Add news found by event source_urls (dedup by link)
+            const seenLinks = new Set(relatedNews.map(n => n.link));
+            for (const url of eventUrls) {
+                if (seenLinks.has(url)) continue;
+                try {
+                    const r = await pool.query('SELECT * FROM news_raw WHERE link = $1', [url]);
+                    if (r.rows.length) { relatedNews.push(r.rows[0]); seenLinks.add(url); }
+                } catch {}
+            }
+
+            emit('status', { message: `${relatedNews.length} noticias encontradas` });
+
+            // Re-extract each news article with focal context
+            if (relatedNews.length > 0) {
+                const { extractFromNewsFast, extractFromNews } = require('./extractor.js');
+                let newsProcessed = 0;
+
+                for (const newsItem of relatedNews.slice(0, 15)) {
+                    newsProcessed++;
+                    emit('status', { message: `Extrayendo ${newsProcessed}/${Math.min(relatedNews.length, 15)}: ${(newsItem.title || '').slice(0, 50)}...` });
+
+                    let extraction;
+                    try {
+                        extraction = await extractFromNewsFast(newsItem).catch(e => {
+                            log(`  Claude API falló: ${e.message}`);
+                            return null;
+                        });
+                        if (!extraction) {
+                            extraction = await extractFromNews(newsItem).catch(e => {
+                                log(`  Ollama falló: ${e.message}`);
+                                return null;
+                            });
+                        }
+                    } catch (e) { log(`  Extracción falló: ${e.message}`); continue; }
+                    if (!extraction?.event) { log(`  Sin evento extraído de: ${(newsItem.title || '').slice(0, 50)}`); continue; }
+
+                    const evt = extraction.event;
+
+                    // Create/merge Evento node — fallback to pub_date if no extracted date
+                    const evtDate = evt.date || newsItem.pub_date || '';
+                    const evtDateMatch = evtDate.match(/(\d{4}-\d{2}-\d{2})/);
+                    const evtNormDate = evtDateMatch ? evtDateMatch[1] : evtDate.slice(0, 10);
+                    await ageQuery(`
+                        MERGE (e:Evento {id: '${esc(evt.id)}'})
+                        SET e.name = '${esc(evt.name)}',
+                            e.event_type = '${esc(evt.event_type)}',
+                            e.date = '${esc(evtNormDate)}',
+                            e.is_disputed = ${evt.is_disputed || false},
+                            e.evidence_quote = '${esc(evt.evidence_quote || '')}',
+                            e.source = '${esc(newsItem.source_name || '')}',
+                            e.source_url = '${esc(newsItem.link || '')}',
+                            e.extraction_confidence = ${parseFloat(evt.extraction_confidence) || 0}
+                        RETURN e
+                    `).catch(() => {});
+
+                    // Create actors + PARTICIPA edges + identify locations
+                    for (const actor of (extraction.actors || [])) {
+                        await ageQuery(`
+                            MERGE (a:Actor {id: '${esc(actor.id)}'})
+                            SET a.name = '${esc(actor.name)}',
+                                a.type = '${esc(actor.type)}',
+                                a.description = '${esc(actor.description || '')}'
+                            RETURN a
+                        `).catch(() => {});
+
+                        await ageQuery(`
+                            MATCH (a:Actor {id: '${esc(actor.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                            MERGE (a)-[r:PARTICIPA]->(e)
+                            SET r.role = '${esc(actor.role || '')}',
+                                r.impact_direction = '${esc(actor.impact_direction || 'neutral')}'
+                            RETURN r
+                        `).catch(() => {});
+
+                        // Track new nodes for the frontend
+                        if (!connectedIds.has(actor.id)) {
+                            connectedIds.add(actor.id);
+                            emit('discovered', {
+                                edge: { source: actor.id, target: evt.id, type: 'PARTICIPA', role: actor.role || '' },
+                                targetNode: { id: actor.id, name: actor.name, type: actor.type, label: 'Actor' },
+                                reason: `extraído de noticia: ${(newsItem.title || '').slice(0, 40)}`
+                            });
+                        }
+                    }
+
+                    // Actor-actor relations (PERTENECE_A, UBICADO_EN)
+                    const VALID_RELS = { PERTENECE_A: true, UBICADO_EN: true };
+                    for (const rel of (extraction.actor_relations || [])) {
+                        const relType = String(rel.relation || '').toUpperCase().replace(/[^A-Z_]/g, '');
+                        if (!VALID_RELS[relType]) continue;
+                        await ageQuery(`
+                            MATCH (a:Actor {id: '${esc(rel.source)}'}), (b:Actor {id: '${esc(rel.target)}'})
+                            MERGE (a)-[:${relType}]->(b)
+                            RETURN a, b
+                        `).catch(() => {});
+                    }
+
+                    // Ensure focal node is linked to this event
+                    if (!focal.event_type) {
+                        // Focal is Actor — check if extraction mentions it, otherwise link contextually
+                        const mentionsFocal = (extraction.actors || []).some(a =>
+                            a.id === id || a.name?.toLowerCase() === focal.name?.toLowerCase()
+                        );
+                        if (!mentionsFocal) {
+                            await ageQuery(`
+                                MATCH (a {id: '${esc(id)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                                MERGE (a)-[r:PARTICIPA]->(e)
+                                SET r.role = 'mencionado en contexto'
+                                RETURN r
+                            `).catch(() => {});
+                        }
+                    }
+
+                    // Track event as discovered
+                    if (!connectedIds.has(evt.id)) {
+                        connectedIds.add(evt.id);
+                        emit('discovered', {
+                            edge: { source: id, target: evt.id, type: 'PARTICIPA', role: 'contexto' },
+                            targetNode: { id: evt.id, name: evt.name, type: evt.event_type, label: 'Evento' },
+                            reason: `evento extraído de ${newsItem.source_name || 'noticia'}`
+                        });
+                    }
+                }
+
+                emit('status', { message: `${newsProcessed} noticias procesadas, actualizando grafo...` });
+            }
+
+            // 4. Get ALL nodes in the graph not connected to focal (refresh after news extraction)
             const allNodes = await ageQuery(`MATCH (n) WHERE n.id <> '${esc(id)}' RETURN n`);
             const unconnected = allNodes.filter(n => !connectedIds.has(n.id));
 
             emit('status', { message: `${connectedIds.size - 1} conexiones actuales, ${unconnected.length} nodos sin vínculo directo` });
 
-            // 4. Alias-based discovery — find synonym matches
-            const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+            // 5. Alias-based discovery — find synonym matches
+            const aliasData = aliasDataForSearch;
             const focalEntry = aliasData.entities[id];
             const focalNames = focalEntry
                 ? [focalEntry.canonical, ...(focalEntry.aliases || [])].map(s => s.toLowerCase())
@@ -841,7 +1198,7 @@ async function handleAPI(req, res) {
                     MATCH (a {id: '${esc(id)}'}), (b {id: '${esc(match.id)}'})
                     MERGE (a)-[r:${relType}]->(b)
                     SET r.role = 'sinónimo detectado'
-                    RETURN a, b
+                    RETURN r
                 `).catch(() => {});
                 emit('discovered', {
                     edge: { source: id, target: match.id, type: relType, role: 'sinónimo detectado' },
@@ -854,7 +1211,7 @@ async function handleAPI(req, res) {
                 emit('status', { message: `${aliasMatches.length} sinónimos vinculados` });
             }
 
-            // 5. Co-occurrence: find nodes that share events with focal's events
+            // 6. Co-occurrence: find nodes that share events with focal's events
             let cooccurrence = [];
             if (focal.label === 'Actor' || !focal.event_type) {
                 const shared = await ageQuery2(`
@@ -871,7 +1228,7 @@ async function handleAPI(req, res) {
                         MATCH (a {id: '${esc(id)}'}), (b {id: '${esc(co.b.id)}'})
                         MERGE (a)-[r:COMPLEMENTA]->(b)
                         SET r.role = 'co-ocurrencia en ${co.cnt} eventos'
-                        RETURN a, b
+                        RETURN r
                     `).catch(() => {});
                     emit('discovered', {
                         edge: { source: id, target: co.b.id, type: 'COMPLEMENTA', role: `co-ocurrencia en ${co.cnt} eventos` },
@@ -884,7 +1241,7 @@ async function handleAPI(req, res) {
                 }
             }
 
-            // 6. LLM-based discovery — ask Claude for semantic relationships
+            // 7. LLM-based discovery — ask Claude for semantic relationships
             const apiKey = process.env.CLAUDE_API_KEY;
             let llmDiscovered = [];
 
@@ -964,7 +1321,7 @@ If no relationships are warranted, return [].`;
                 }
             }
 
-            // 7. Generative LLM phase — propose NEW entities not yet in the graph
+            // 8. Generative LLM phase — propose NEW entities not yet in the graph
             let generatedNodes = [];
             if (apiKey) {
                 emit('status', { message: 'Buscando entidades conocidas no representadas...' });
@@ -1040,7 +1397,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
                         MATCH (a {id: '${esc(src)}'}), (b {id: '${esc(tgt)}'})
                         MERGE (a)-[r:${ent.relation}]->(b)
                         SET r.role = '${esc(ent.role || '')}'
-                        RETURN a, b
+                        RETURN r
                     `).catch(() => {});
 
                     emit('discovered', {
@@ -1051,7 +1408,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
                 }
             }
 
-            // 8. Write LLM-discovered edges to graph (existing nodes)
+            // 9. Write LLM-discovered edges to graph (existing nodes)
             let created = 0;
             for (const rel of llmDiscovered) {
                 if (!rel.source || !rel.target || !rel.type) continue;
@@ -1063,7 +1420,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
                     MATCH (a {id: '${esc(rel.source)}'}), (b {id: '${esc(rel.target)}'})
                     MERGE (a)-[r:${rel.type}]->(b)
                     SET r.role = '${esc(rel.role || '')}'
-                    RETURN a, b
+                    RETURN r
                 `).catch(() => {});
 
                 // Find the target node data for the frontend
@@ -1093,7 +1450,7 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
     // --- Manual edge creation ---
     if (url.pathname === '/api/edge/create' && req.method === 'POST') {
         const body = JSON.parse(await readBody(req));
-        const { source, target, type, role } = body;
+        const { source, target, type, role, impact_direction, contradiction_type, tension_score } = body;
         if (!source || !target || !type) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end('{"error":"source, target, and type required"}');
@@ -1106,11 +1463,17 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
             return;
         }
         try {
+            const setParts = [];
+            if (role) setParts.push(`r.role = '${esc(role)}'`);
+            if (impact_direction) setParts.push(`r.impact_direction = '${esc(impact_direction)}'`);
+            if (contradiction_type) setParts.push(`r.contradiction_type = '${esc(contradiction_type)}'`);
+            if (tension_score != null) setParts.push(`r.tension_score = ${parseFloat(tension_score) || 0}`);
+            const setClause = setParts.length ? `SET ${setParts.join(', ')}` : '';
             await ageQuery(`
                 MATCH (a {id: '${esc(source)}'}), (b {id: '${esc(target)}'})
                 MERGE (a)-[r:${type}]->(b)
-                ${role ? `SET r.role = '${esc(role)}'` : ''}
-                RETURN a, b
+                ${setClause}
+                RETURN r
             `);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, source, target, type, role: role || '' }));
@@ -1763,6 +2126,163 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
         return;
     }
 
+    // --- Graph maintenance / pruning ---
+    if (url.pathname === '/api/graph/health' && req.method === 'GET') {
+        try {
+            const client = await pool.connect();
+            try {
+                await client.query("LOAD 'age'");
+                await client.query("SET search_path = ag_catalog, public");
+
+                // Fast queries only — avoid full-graph scans
+                const totalR = await client.query("SELECT count(*) FROM lombardi._ag_label_vertex");
+                const edgeR = await client.query("SELECT count(*) FROM lombardi._ag_label_edge");
+                const noDateR = await client.query(`SELECT count(*) FROM cypher('lombardi', $$ MATCH (e:Evento) WHERE e.date IS NULL OR e.date = '' OR e.date = 'null' RETURN e $$) as (e agtype)`);
+                const orphanR = await client.query(`SELECT count(*) FROM cypher('lombardi', $$ MATCH (n) WHERE NOT EXISTS { (n)-[]-() } RETURN n $$) as (n agtype)`);
+
+                // News stats from SQL
+                const newsR = await client.query("SELECT count(*) as total FROM news_raw");
+                const sourcesR = await client.query("SELECT count(DISTINCT source_name) as n FROM news_raw");
+
+                const health = {
+                    total_nodes: parseInt(totalR.rows[0].count),
+                    total_edges: parseInt(edgeR.rows[0].count),
+                    orphans: parseInt(orphanR.rows[0].count),
+                    events_no_date: parseInt(noDateR.rows[0].count),
+                    news_total: parseInt(newsR.rows[0].total),
+                    news_sources: parseInt(sourcesR.rows[0].n)
+                };
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify(health));
+            } finally {
+                client.release();
+            }
+        } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    if (url.pathname === '/api/graph/prune' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const actions = body.actions || ['orphans', 'mistyped'];
+        const dryRun = body.dry_run !== false; // default: dry run
+        const results = { removed: [], fixed: [], dry_run: dryRun };
+
+        try {
+            // 1. Remove orphan nodes (zero edges)
+            if (actions.includes('orphans')) {
+                const orphans = await ageQuery('MATCH (n) WHERE NOT EXISTS { (n)-[]-() } RETURN n');
+                for (const n of orphans) {
+                    results.removed.push({ id: n.id, name: n.name, label: n.label, reason: 'orphan' });
+                    if (!dryRun) {
+                        await ageQuery(`MATCH (n {id: '${esc(n.id)}'}) DELETE n RETURN true`).catch(() => {});
+                    }
+                }
+            }
+
+            // 2. Fix mistyped actors (type=Event/EVENTO → should be Evento label)
+            if (actions.includes('mistyped')) {
+                const mistyped = await ageQuery("MATCH (a:Actor) WHERE a.type IN ['Event', 'EVENTO', 'Evento'] RETURN a");
+                for (const n of mistyped) {
+                    results.fixed.push({ id: n.id, name: n.name, reason: 'actor typed as event' });
+                    // Can't relabel in AGE, but we can fix the type to a proper Actor type
+                    if (!dryRun) {
+                        await ageQuery(`
+                            MATCH (a:Actor {id: '${esc(n.id)}'})
+                            SET a.type = 'Organization'
+                            RETURN a
+                        `).catch(() => {});
+                    }
+                }
+            }
+
+            // 3. Remove leaf events with no content (degree 1, no description, no evidence)
+            if (actions.includes('thin_events')) {
+                const thinEvents = await ageQuery(`
+                    MATCH (e:Evento)-[r]-()
+                    WITH e, count(r) as deg
+                    WHERE deg = 1
+                        AND (e.evidence_quote IS NULL OR e.evidence_quote = '')
+                        AND (e.name IS NULL OR e.name = '' OR e.name = e.id)
+                    RETURN e
+                `);
+                for (const e of thinEvents) {
+                    results.removed.push({ id: e.id, name: e.name, label: 'Evento', reason: 'thin event (no content, degree 1)' });
+                    if (!dryRun) {
+                        await ageQuery(`MATCH (e:Evento {id: '${esc(e.id)}'})-[r]-() DELETE r, e RETURN true`).catch(() => {});
+                    }
+                }
+            }
+
+            // 4. Remove leaf actors with no description and degree 1
+            if (actions.includes('thin_actors')) {
+                const thinActors = await ageQuery(`
+                    MATCH (a:Actor)-[r]-()
+                    WITH a, count(r) as deg
+                    WHERE deg = 1
+                        AND (a.description IS NULL OR a.description = '')
+                        AND (a.type IS NULL OR a.type = '')
+                    RETURN a
+                `);
+                for (const a of thinActors) {
+                    results.removed.push({ id: a.id, name: a.name, label: 'Actor', reason: 'thin actor (no description/type, degree 1)' });
+                    if (!dryRun) {
+                        await ageQuery(`MATCH (a:Actor {id: '${esc(a.id)}'})-[r]-() DELETE r, a RETURN true`).catch(() => {});
+                    }
+                }
+            }
+
+            // 5. Merge duplicate nodes (same canonical name)
+            if (actions.includes('duplicates')) {
+                const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+                const canonicalToIds = {};
+                for (const [id, entry] of Object.entries(aliasData.entities)) {
+                    const c = entry.canonical.toLowerCase();
+                    if (!canonicalToIds[c]) canonicalToIds[c] = [];
+                    canonicalToIds[c].push(id);
+                }
+                for (const [canonical, ids] of Object.entries(canonicalToIds)) {
+                    if (ids.length < 2) continue;
+                    results.fixed.push({ canonical, ids, reason: 'duplicate canonical name' });
+                    // Merge: keep the first, redirect edges from the rest
+                    if (!dryRun) {
+                        const keep = ids[0];
+                        for (const dup of ids.slice(1)) {
+                            // Re-point edges from dup → keep
+                            const edges = await ageQuery2(
+                                `MATCH (n {id: '${esc(dup)}'})-[r]-(m) RETURN r, m`, ['r', 'm']
+                            ).catch(() => []);
+                            for (const e of (edges || [])) {
+                                const edgeType = e.r.label;
+                                const otherId = e.m.id;
+                                if (otherId === keep) continue;
+                                await ageQuery(`
+                                    MATCH (a {id: '${esc(keep)}'}), (b {id: '${esc(otherId)}'})
+                                    MERGE (a)-[:${edgeType}]->(b)
+                                    RETURN a
+                                `).catch(() => {});
+                            }
+                            // Delete dup and its edges
+                            await ageQuery(`MATCH (n {id: '${esc(dup)}'})-[r]-() DELETE r, n RETURN true`).catch(() => {});
+                            await ageQuery(`MATCH (n {id: '${esc(dup)}'}) DELETE n RETURN true`).catch(() => {});
+                        }
+                    }
+                }
+            }
+
+            console.log(`[Prune] ${dryRun ? 'DRY RUN' : 'EXECUTED'}: ${results.removed.length} removed, ${results.fixed.length} fixed`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(results));
+        } catch (err) {
+            console.error('Prune error:', err.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
 }
@@ -1797,4 +2317,45 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
-server.listen(PORT, () => console.log(`OS API: http://localhost:${PORT}`));
+server.listen(PORT, async () => {
+    console.log(`OS API: http://localhost:${PORT}`);
+
+    // Backfill: assign dates to events that lack them, using news_raw pub_date
+    try {
+        const client = await pool.connect();
+        await client.query("LOAD 'age'");
+        await client.query("SET search_path = ag_catalog, public");
+        const undated = await client.query(`
+            SELECT * FROM cypher('lombardi', $$
+                MATCH (e:Evento) WHERE e.date IS NULL OR e.date = '' OR e.date = 'null'
+                RETURN e
+            $$) as (e agtype)
+        `);
+        let fixed = 0;
+        for (const row of undated.rows) {
+            const evt = parseAgtype(row.e);
+            const url = evt.properties?.source_url;
+            if (!url) continue;
+            const news = await client.query('SELECT pub_date FROM news_raw WHERE link = $1', [url]);
+            if (news.rows.length && news.rows[0].pub_date) {
+                const pd = news.rows[0].pub_date;
+                const m = pd.match(/(\d{4}-\d{2}-\d{2})/);
+                const dateStr = m ? m[1] : pd.slice(0, 10);
+                if (dateStr && dateStr.length >= 8) {
+                    await client.query(`
+                        SELECT * FROM cypher('lombardi', $$
+                            MATCH (e:Evento {id: '${esc(evt.properties.id)}'})
+                            SET e.date = '${esc(dateStr)}'
+                            RETURN e
+                        $$) as (e agtype)
+                    `);
+                    fixed++;
+                }
+            }
+        }
+        client.release();
+        if (fixed) console.log(`OS: Backfill — ${fixed} eventos recibieron fecha desde news_raw.`);
+    } catch (err) {
+        console.error('Backfill error:', err.message);
+    }
+});

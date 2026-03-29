@@ -28,9 +28,45 @@ body {
     font-weight: 400;
     letter-spacing: 0.5px;
     white-space: nowrap;
+    display: flex;
+    align-items: baseline;
 }
 
 .shell-header h1 strong { font-weight: 400; }
+
+/* Lombardispute animation */
+.dispute-suffix {
+    color: var(--node-evento, #C45D3E);
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-style: normal;
+    font-size: inherit;
+    letter-spacing: inherit;
+    display: none;
+}
+.dispute-suffix.active {
+    display: inline;
+    cursor: pointer;
+}
+.dispute-suffix.active:hover {
+    text-decoration: underline;
+}
+/* Dispute trigger plus */
+.dispute-plus {
+    color: var(--node-evento, #C45D3E);
+    font-family: inherit;
+    font-weight: inherit;
+    font-style: inherit;
+    font-size: inherit;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+}
+.dispute-plus:hover {
+    opacity: 0.7;
+}
+.dispute-plus.hidden {
+    display: none;
+}
 
 .header-controls {
     display: flex;
@@ -257,9 +293,29 @@ body {
     color: var(--ink-muted);
 }
 
+.process-section-divider {
+    border-top: 1px solid var(--border-default);
+    margin: var(--space-sm) 0;
+}
+
+.process-section-label {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: .1ex;
+    grid-column: 1 / -1;
+    padding-bottom: 2px;
+}
+
+.process-stat.warn .process-stat-value {
+    color: var(--accent);
+}
+
 .process-actions {
     display: flex;
     gap: var(--space-sm);
+    flex-wrap: wrap;
 }
 
 .process-runner {
@@ -364,52 +420,63 @@ body {
     z-index: 5;
     display: flex;
     align-items: center;
-    gap: 1px;
-    background: var(--border-default);
-    border-radius: 4px;
-    overflow: hidden;
+    gap: var(--space-sm);
+    font-family: var(--font-sans);
+    text-transform: uppercase;
+    letter-spacing: .2ex;
 }
 
+/* --- Degree 3-state switch --- */
 .degree-control {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 var(--space-sm);
-    background: var(--bg-surface);
+    gap: 2px;
 }
 .degree-control label {
     font-size: var(--font-size-xs);
     color: var(--ink-muted);
     white-space: nowrap;
+    margin-right: 4px;
 }
-.degree-control input[type="range"] {
-    width: 50px;
-    accent-color: var(--accent);
-    cursor: pointer;
-}
-.degree-control span {
+.degree-btn {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 4px 6px;
     font-size: var(--font-size-xs);
+    font-family: var(--font-sans);
+    text-transform: uppercase;
+    letter-spacing: .2ex;
+    color: var(--ink-muted);
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease-default);
+}
+.degree-btn:hover { color: var(--ink-primary); }
+.degree-btn.active {
     color: var(--ink-primary);
     font-weight: 600;
-    min-width: 12px;
+    border-bottom-color: var(--accent);
 }
 
 .view-toggle {
-    background: var(--bg-surface);
+    background: none;
     color: var(--ink-muted);
     border: none;
+    border-bottom: 2px solid transparent;
     padding: 4px var(--space-md);
     font-size: var(--font-size-xs);
-    font-family: var(--font-mono);
+    font-family: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
     cursor: pointer;
     transition: all var(--duration-fast) var(--ease-default);
 }
 
 .view-toggle:hover { color: var(--ink-primary); }
 .view-toggle.active {
-    background: var(--bg-surface-alt);
     color: var(--ink-primary);
     font-weight: 600;
+    border-bottom-color: var(--accent);
 }
 
 /* --- Graph container --- */

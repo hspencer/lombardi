@@ -32,6 +32,36 @@ function matchesTopics(topics, title, description) {
     return topics.some(topic => text.includes(topic.toLowerCase()));
 }
 
+function stripHtml(html) {
+    return html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '')
+        .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '')
+        .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&[a-z]+;/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+async function fetchArticleContent(link) {
+    try {
+        const resp = await fetch(link, {
+            signal: AbortSignal.timeout(10000),
+            headers: { 'User-Agent': 'Mozilla/5.0 (compatible; Lombardi/1.0)' }
+        });
+        if (!resp.ok) return null;
+        const html = await resp.text();
+        const text = stripHtml(html);
+        // Return a meaningful chunk — skip if too short (probably a paywall/redirect)
+        if (text.length < 200) return null;
+        return text.slice(0, 5000);
+    } catch {
+        return null;
+    }
+}
+
 async function fetchFeed(source, topics) {
     try {
         console.log(`OS: Fetching ${source.name} (${source.lang})...`);
@@ -60,13 +90,20 @@ async function fetchFeed(source, topics) {
                 continue;
             }
 
+            // Fetch full article content (fall back to RSS summary)
+            let fullText = null;
+            if (link) {
+                fullText = await fetchArticleContent(link);
+            }
+
             const content = {
                 source_name: source.name,
                 source_lang: source.lang,
                 source_region: source.region,
                 title,
                 link,
-                description,
+                description: fullText || description,
+                summary: description,
                 pub_date: item.pubDate || item.published || item.updated || '',
                 ingested_at: new Date().toISOString()
             };

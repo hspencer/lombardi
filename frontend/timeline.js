@@ -9,6 +9,7 @@ const Timeline = (() => {
     let _xScale;
     let _dateRange = null;       // [Date, Date]
     let _datedNodes = [];        // [{id, date: Date}]
+    let _allEventIds = null;     // Set of all Evento IDs (including undated)
     let _selectedRange = null;   // [Date, Date]
     let _playInterval = null;
     let _playing = false;
@@ -31,9 +32,11 @@ const Timeline = (() => {
 
         // Extract dated Evento nodes (only those passing degree filter)
         const deg = (typeof currentDegree !== 'undefined') ? currentDegree : 3;
-        _datedNodes = (egoData?.nodes || [])
-            .filter(n => n.label === 'Evento' && n.date && n.date !== 'null' && n.date !== ''
-                && (n._degree || 0) <= deg)
+        const allEventos = (egoData?.nodes || [])
+            .filter(n => n.label === 'Evento' && (n._degree || 0) <= deg);
+        _allEventIds = new Set(allEventos.map(n => n.id));
+        _datedNodes = allEventos
+            .filter(n => n.date && n.date !== 'null' && n.date !== '')
             .map(n => ({ id: n.id, date: _parseDate(n.date) }))
             .filter(n => n.date instanceof Date && !isNaN(n.date));
 
@@ -79,6 +82,14 @@ const Timeline = (() => {
         const ids = new Set();
         for (const n of _datedNodes) {
             if (n.date >= lo && n.date <= hi) ids.add(n.id);
+        }
+        // Also include undated event IDs (from _allEventIds) when brush covers > 80% of range
+        if (_allEventIds && _dateRange) {
+            const totalSpan = _dateRange[1].getTime() - _dateRange[0].getTime();
+            const selectedSpan = hi.getTime() - lo.getTime();
+            if (selectedSpan / totalSpan > 0.8) {
+                for (const id of _allEventIds) ids.add(id);
+            }
         }
         return ids;
     }
@@ -269,7 +280,7 @@ const Timeline = (() => {
         _updatePlayIcon();
 
         const totalMs = _dateRange[1].getTime() - _dateRange[0].getTime();
-        const steps = 80;
+        const steps = 300;
         const stepMs = totalMs / steps;
         let currentRight = _dateRange[0].getTime();
 
@@ -288,7 +299,7 @@ const Timeline = (() => {
             _selectedRange = [_dateRange[0], new Date(currentRight)];
             _updateLabels(x0, x1);
             _applyFilter();
-        }, 100);
+        }, 120);
     }
 
     function _stopPlay() {

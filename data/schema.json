@@ -1,32 +1,47 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Lombardi Ontology",
-  "version": "2.0.0",
-  "description": "Ontología v2: Actor + Evento como nodos. Relaciones como aristas con metadatos. Noticias solo en SQL.",
+  "version": "3.0.0",
+  "description": "Ontología v3: Actor + Evento como nodos. Relaciones como aristas con metadatos. i18n integrado. Noticias solo en SQL.",
 
   "graph": {
     "name": "lombardi",
     "nodes": {
       "Actor": {
         "description": "Entidad que participa en eventos: persona, organización, lugar u objeto.",
+        "i18n": {
+          "es": { "label": "Actor", "description": "Entidad que participa en eventos." },
+          "en": { "label": "Actor", "description": "Entity that participates in events." }
+        },
         "properties": {
           "id":          { "type": "string", "description": "Identificador único kebab-case.", "primary": true },
           "name":        { "type": "string", "description": "Nombre legible para visualización." },
           "type":        { "type": "string", "enum": ["Person", "Organization", "Location", "Object"], "description": "Clasificación." },
           "description": { "type": "string", "description": "Descriptor breve en español." }
+        },
+        "type_labels": {
+          "Person":       { "es": "Persona",      "en": "Person" },
+          "Organization": { "es": "Organización",  "en": "Organization" },
+          "Location":     { "es": "Lugar",         "en": "Location" },
+          "Object":       { "es": "Objeto",        "en": "Object" }
         }
       },
       "Evento": {
         "description": "Hecho noticioso discreto. Centro gravitacional del grafo.",
+        "i18n": {
+          "es": { "label": "Evento", "description": "Hecho noticioso discreto." },
+          "en": { "label": "Event", "description": "Discrete news event." }
+        },
         "properties": {
-          "id":              { "type": "string", "description": "kebab-case descriptivo (ej: 'disculpa-rai-bobsled-israel').", "primary": true },
-          "name":            { "type": "string", "description": "Nombre legible en español del hecho." },
-          "event_type":      { "type": "string", "$ref": "#/event_types" },
-          "date":            { "type": "string", "format": "date", "description": "Fecha del evento (YYYY-MM-DD)." },
-          "is_disputed":     { "type": "boolean", "default": false },
-          "evidence_quote":  { "type": "string", "description": "Cita textual en idioma original de la fuente." },
-          "source":          { "type": "string", "description": "Nombre de la fuente que reporta." },
-          "source_url":      { "type": "string", "format": "uri" }
+          "id":                      { "type": "string", "description": "kebab-case descriptivo (ej: 'disculpa-rai-bobsled-israel').", "primary": true },
+          "name":                    { "type": "string", "description": "Nombre legible en español del hecho." },
+          "event_type":              { "type": "string", "$ref": "#/event_types" },
+          "date":                    { "type": "string", "format": "date", "description": "Fecha del evento (YYYY-MM-DD)." },
+          "is_disputed":             { "type": "boolean", "default": false },
+          "evidence_quote":          { "type": "string", "description": "Cita textual en idioma original de la fuente." },
+          "source":                  { "type": "string", "description": "Nombre de la fuente que reporta." },
+          "source_url":              { "type": "string", "format": "uri" },
+          "extraction_confidence":   { "type": "number", "minimum": 0, "maximum": 1, "description": "Confianza del LLM en la extracción (0-1)." }
         }
       }
     },
@@ -35,8 +50,13 @@
         "from": "Actor",
         "to": "Evento",
         "description": "El actor participa en este evento. El rol describe cómo.",
+        "i18n": {
+          "es": { "label": "Participa",       "description": "El actor participa en este evento." },
+          "en": { "label": "Participates in",  "description": "The actor participates in this event." }
+        },
         "properties": {
-          "role": { "type": "string", "description": "Verbo que describe la participación: 'se disculpa', 'ataca', 'sanciona', 'declara'." }
+          "role":             { "type": "string", "description": "Verbo que describe la participación: 'se disculpa', 'ataca', 'sanciona', 'declara'." },
+          "impact_direction": { "type": "string", "enum": ["positive", "negative", "neutral"], "description": "Dirección del impacto del actor en el evento." }
         },
         "visual": { "color": "#2980B9", "style": "arrow", "width": 2, "force_distance": 80 }
       },
@@ -44,16 +64,25 @@
         "from": "Evento",
         "to": "Evento",
         "description": "Un evento causa o desencadena otro.",
+        "i18n": {
+          "es": { "label": "Causa",   "description": "Un evento causa o desencadena otro." },
+          "en": { "label": "Causes",  "description": "One event causes or triggers another." }
+        },
         "visual": { "color": "#8E44AD", "style": "arrow", "width": 3, "force_distance": 150 }
       },
       "CONTRADICE": {
         "from": "Evento",
         "to": "Evento",
         "description": "Dos eventos de distintas fuentes se contradicen sobre el mismo hecho.",
+        "i18n": {
+          "es": { "label": "Contradice",   "description": "Dos eventos de distintas fuentes se contradicen." },
+          "en": { "label": "Contradicts",   "description": "Two events from different sources contradict each other." }
+        },
         "properties": {
-          "tension_score": { "type": "number", "minimum": 0, "maximum": 1 },
-          "analysis":      { "type": "string" },
-          "detected_by":   { "type": "string" }
+          "tension_score":      { "type": "number", "minimum": 0, "maximum": 1 },
+          "contradiction_type": { "type": "string", "enum": ["fact", "actor", "attribute", "narrative"], "description": "Tipo de contradicción: hecho, actor, atributo o narrativa." },
+          "analysis":           { "type": "string" },
+          "detected_by":        { "type": "string" }
         },
         "visual": { "color": "#E74C3C", "style": "solid", "width": 5, "force_distance": 300 }
       },
@@ -61,18 +90,40 @@
         "from": "Evento",
         "to": "Evento",
         "description": "Dos eventos de distintas fuentes se refuerzan mutuamente.",
+        "i18n": {
+          "es": { "label": "Complementa",  "description": "Dos eventos de distintas fuentes se refuerzan." },
+          "en": { "label": "Complements",   "description": "Two events from different sources reinforce each other." }
+        },
         "visual": { "color": "#27AE60", "style": "dashed", "width": 2, "force_distance": 50 }
+      },
+      "ACTUALIZA": {
+        "from": "Evento",
+        "to": "Evento",
+        "description": "Un evento corrige, retracta o actualiza información de otro.",
+        "i18n": {
+          "es": { "label": "Actualiza",  "description": "Un evento corrige o actualiza otro." },
+          "en": { "label": "Updates",     "description": "One event corrects or updates another." }
+        },
+        "visual": { "color": "#F39C12", "style": "arrow", "width": 2, "force_distance": 120 }
       },
       "PERTENECE_A": {
         "from": "Actor",
         "to": "Actor",
         "description": "Relación estructural (presidente de, miembro de).",
+        "i18n": {
+          "es": { "label": "Pertenece a",  "description": "Relación estructural." },
+          "en": { "label": "Belongs to",    "description": "Structural relationship." }
+        },
         "visual": { "color": "#7F8C8D", "style": "solid", "width": 1, "force_distance": 60 }
       },
       "UBICADO_EN": {
         "from": "Actor",
         "to": "Actor",
         "description": "Relación geográfica.",
+        "i18n": {
+          "es": { "label": "Ubicado en",   "description": "Relación geográfica." },
+          "en": { "label": "Located in",    "description": "Geographic relationship." }
+        },
         "visual": { "color": "#7F8C8D", "style": "dashed", "width": 1, "force_distance": 60 }
       }
     }
@@ -91,35 +142,36 @@
         "description":   { "type": "text" },
         "pub_date":      { "type": "text" },
         "ingested_at":   { "type": "timestamptz", "default": "NOW()" },
-        "processed":     { "type": "boolean", "default": false }
+        "processed":     { "type": "boolean", "default": false },
+        "content_hash":  { "type": "text", "description": "SHA-256 del body para detección de duplicados/bots." }
       }
     }
   },
 
   "event_types": [
-    { "id": "CAMBIO_LIDERAZGO",     "label": "Cambio de liderazgo" },
-    { "id": "PROMULGACION_NORMA",    "label": "Promulgación de norma" },
-    { "id": "PROTESTA_SOCIAL",       "label": "Protesta social" },
-    { "id": "RUPTURA_DIPLOMATICA",   "label": "Ruptura diplomática" },
-    { "id": "ACCION_ARMADA",         "label": "Acción armada" },
-    { "id": "AMENAZA_COERCION",      "label": "Amenaza o coerción" },
-    { "id": "INCAUTACION_DETENCION", "label": "Incautación o detención" },
-    { "id": "ACUERDO_PAZ",           "label": "Acuerdo de paz" },
-    { "id": "ADQUISICION_FUSION",    "label": "Adquisición o fusión" },
-    { "id": "SANCION_ECONOMICA",     "label": "Sanción económica" },
-    { "id": "LANZAMIENTO_PRODUCTO",  "label": "Lanzamiento de producto" },
-    { "id": "QUIEBRA_INSOLVENCIA",   "label": "Quiebra o insolvencia" },
-    { "id": "DECLARACION_PUBLICA",   "label": "Declaración pública" },
-    { "id": "DENUNCIA_ACUSACION",    "label": "Denuncia o acusación" },
-    { "id": "FILTRACION",            "label": "Filtración" },
-    { "id": "DESMENTIDO",            "label": "Desmentido" },
-    { "id": "EVENTO_GENERICO",       "label": "Evento genérico" }
+    { "id": "CAMBIO_LIDERAZGO",     "label": "Cambio de liderazgo",     "i18n": { "en": "Leadership change" } },
+    { "id": "PROMULGACION_NORMA",    "label": "Promulgación de norma",   "i18n": { "en": "Regulation enactment" } },
+    { "id": "PROTESTA_SOCIAL",       "label": "Protesta social",         "i18n": { "en": "Social protest" } },
+    { "id": "RUPTURA_DIPLOMATICA",   "label": "Ruptura diplomática",     "i18n": { "en": "Diplomatic rupture" } },
+    { "id": "ACCION_ARMADA",         "label": "Acción armada",           "i18n": { "en": "Armed action" } },
+    { "id": "AMENAZA_COERCION",      "label": "Amenaza o coerción",      "i18n": { "en": "Threat or coercion" } },
+    { "id": "INCAUTACION_DETENCION", "label": "Incautación o detención", "i18n": { "en": "Seizure or detention" } },
+    { "id": "ACUERDO_PAZ",           "label": "Acuerdo de paz",          "i18n": { "en": "Peace agreement" } },
+    { "id": "ADQUISICION_FUSION",    "label": "Adquisición o fusión",    "i18n": { "en": "Acquisition or merger" } },
+    { "id": "SANCION_ECONOMICA",     "label": "Sanción económica",       "i18n": { "en": "Economic sanction" } },
+    { "id": "LANZAMIENTO_PRODUCTO",  "label": "Lanzamiento de producto", "i18n": { "en": "Product launch" } },
+    { "id": "QUIEBRA_INSOLVENCIA",   "label": "Quiebra o insolvencia",   "i18n": { "en": "Bankruptcy or insolvency" } },
+    { "id": "DECLARACION_PUBLICA",   "label": "Declaración pública",     "i18n": { "en": "Public statement" } },
+    { "id": "DENUNCIA_ACUSACION",    "label": "Denuncia o acusación",    "i18n": { "en": "Accusation or indictment" } },
+    { "id": "FILTRACION",            "label": "Filtración",              "i18n": { "en": "Leak" } },
+    { "id": "DESMENTIDO",            "label": "Desmentido",              "i18n": { "en": "Denial" } },
+    { "id": "EVENTO_GENERICO",       "label": "Evento genérico",         "i18n": { "en": "Generic event" } }
   ],
 
   "extraction": {
     "models": {
-      "extractor":  { "model": "llama3.1:latest",  "role": "Extracción ontológica desde noticias." },
-      "resolver":   { "model": "llama3.1:latest",   "role": "Detección de contradicciones entre eventos." },
+      "extractor":  { "model": "gemma3:latest",  "role": "Extracción ontológica desde noticias." },
+      "resolver":   { "model": "gemma3:latest",   "role": "Detección de contradicciones entre eventos." },
       "auditor":    { "model": "claude",     "role": "Análisis complejo. Uso puntual vía API." }
     },
     "output_language": "es",
@@ -127,6 +179,8 @@
       "Extraer el EVENTO principal: un hecho discreto con id kebab-case, nombre en español, event_type y fecha.",
       "Extraer ACTORES involucrados con id, nombre, tipo (Person/Organization/Location/Object) y descriptor breve.",
       "Para cada actor, indicar su ROL en el evento: el verbo que describe su participación (ej: 'se disculpa', 'sanciona', 'ataca', 'declara').",
+      "Para cada actor, indicar impact_direction: 'positive', 'negative' o 'neutral' según el impacto de su participación.",
+      "Indicar extraction_confidence (0.0-1.0): confianza en la calidad de la extracción.",
       "Extraer relaciones estructurales entre actores (PERTENECE_A, UBICADO_EN).",
       "Si hay duda o versiones conflictivas: is_disputed = true en el evento.",
       "Mantener evidence_quote en el idioma original de la fuente.",

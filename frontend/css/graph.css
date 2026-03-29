@@ -1,3 +1,9 @@
+/* --- Non-scaling strokes: edges keep constant width on zoom --- */
+#graph path,
+#graph line {
+    vector-effect: non-scaling-stroke;
+}
+
 /* --- Animaciones del grafo --- */
 
 /* Pulso para nodos en disputa crítica */
@@ -58,7 +64,8 @@
 .graph-tooltip .tooltip-date {
     display: inline-block;
     margin-left: 6px;
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
+    font-style: italic;
     font-size: var(--font-size-xs);
     color: var(--accent);
     opacity: 0.85;
@@ -164,4 +171,70 @@
 .timeline-axis path {
     stroke: var(--border-default);
     stroke-width: 0.5;
+}
+
+/* --- Territory View --- */
+
+.territory-coast path {
+    vector-effect: non-scaling-stroke;
+}
+
+.territory-zone {
+    pointer-events: none;
+    transition: opacity var(--duration-slow) var(--ease-default);
+}
+
+[data-theme="dark"] .territory-zone,
+:root:not([data-theme]) .territory-zone {
+    mix-blend-mode: screen;
+}
+[data-theme="light"] .territory-zone {
+    mix-blend-mode: multiply;
+}
+
+.territory-arcs path {
+    vector-effect: non-scaling-stroke;
+    transition: opacity var(--duration-normal) var(--ease-default);
+}
+
+.territory-labels text {
+    transition: opacity var(--duration-normal) var(--ease-default);
+}
+
+.territory-bg-layer rect {
+    pointer-events: none;
+}
+
+/* --- Territory Toggle --- */
+
+#territoryToggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#territoryToggle svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* --- Map Backdrop (persistent) --- */
+
+.map-backdrop {
+    pointer-events: none;
+}
+
+.map-backdrop path {
+    vector-effect: non-scaling-stroke;
+}
+
+/* --- Mini Map (detail panel) --- */
+
+.detail-minimap {
+    margin: var(--space-sm) 0 var(--space-md);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.detail-minimap svg {
+    display: block;
 }

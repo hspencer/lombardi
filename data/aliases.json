@@ -2,7 +2,7 @@
   "$schema": "Diccionario de normalización de entidades para Lombardi",
   "version": "1.0.0",
   "description": "Mapea variantes de nombres a un ID canónico. Se consulta en cada ingesta para evitar nodos duplicados en el grafo. Editable manualmente o por el sistema.",
-  "updated_at": "2026-03-27",
+  "updated_at": "2026-03-29",
   "entities": {
     "donald-trump": {
       "canonical": "Donald Trump",
@@ -77,16 +77,6 @@
         "Kyiv"
       ]
     },
-    "china": {
-      "canonical": "China",
-      "type": "Location",
-      "aliases": [
-        "PRC",
-        "People's Republic of China",
-        "Beijing",
-        "Pekín"
-      ]
-    },
     "iran": {
       "canonical": "Irán",
       "type": "Location",
@@ -105,18 +95,6 @@
         "Tel Aviv",
         "Jerusalem",
         "Jerusalén"
-      ]
-    },
-    "union-europea": {
-      "canonical": "Unión Europea",
-      "type": "Organization",
-      "aliases": [
-        "EU",
-        "UE",
-        "European Union",
-        "Bruselas",
-        "Brussels",
-        "the EU"
       ]
     },
     "otan": {
@@ -305,11 +283,6 @@
       "type": "Organization",
       "aliases": []
     },
-    "hezbollah": {
-      "canonical": "Hezbolá",
-      "type": "Organization",
-      "aliases": []
-    },
     "kremlin": {
       "canonical": "Kremlin",
       "type": "Organization",
@@ -369,22 +342,6 @@
       "type": "Organization",
       "aliases": []
     },
-    "estados-unidos-de-america": {
-      "canonical": "Estados Unidos",
-      "type": "Location",
-      "aliases": [
-        "EE.UU.",
-        "EEUU",
-        "USA",
-        "US",
-        "United States",
-        "the United States",
-        "the US",
-        "America",
-        "Washington",
-        "estados-unidos"
-      ]
-    },
     "pentagono": {
       "canonical": "Pentágono",
       "type": "Location",
@@ -403,7 +360,19 @@
     "estados-unidos": {
       "canonical": "Estados Unidos",
       "type": "Location",
-      "aliases": []
+      "aliases": [
+        "EE.UU.",
+        "EEUU",
+        "USA",
+        "US",
+        "United States",
+        "the United States",
+        "the US",
+        "America",
+        "Washington",
+        "estados-unidos-de-america",
+        "U.S.A."
+      ]
     },
     "pentagonoo": {
       "canonical": "Pentágono",
@@ -423,6 +392,87 @@
       "aliases": [
         "Empresas de IA",
         "Big tech"
+      ]
+    },
+    "hizbulá": {
+      "canonical": "Hezbolá",
+      "type": "Organization",
+      "aliases": [
+        "hezbollah"
+      ]
+    },
+    "area-de-la-bahia-de-san-francisco": {
+      "canonical": "Área de la Bahía de San Francisco",
+      "type": "Location",
+      "aliases": [
+        "San Francisco Bay Area"
+      ]
+    },
+    "republica-de-china": {
+      "canonical": "China",
+      "type": "Location",
+      "aliases": [
+        "PRC",
+        "People's Republic of China",
+        "Beijing",
+        "Pekín",
+        "china"
+      ]
+    },
+    "europe-jfk": {
+      "canonical": "Unión Europea",
+      "type": "Organization",
+      "aliases": [
+        "EU",
+        "UE",
+        "European Union",
+        "Bruselas",
+        "Brussels",
+        "the EU",
+        "union-europea"
+      ]
+    },
+    "herbert-spencer": {
+      "canonical": "Herbert Spencer",
+      "type": "[object Object]",
+      "aliases": []
+    },
+    "volodymyr-zelenskyy": {
+      "canonical": "Volodymyr Zelenskyy",
+      "type": "Person",
+      "aliases": [
+        "zelensky-1",
+        "zelenskyy-volodymyr",
+        "zelensky-volodymyr",
+        "zelensky-kiev",
+        "volodymyr-zelenskyj",
+        "selenskyj"
+      ]
+    },
+    "idf": {
+      "canonical": "IDF (Fuerzas de Defensa de Israel)",
+      "type": "Organization",
+      "aliases": [
+        "idf-soldados",
+        "israel-idf",
+        "idf-israel"
+      ]
+    },
+    "terroristas-de-donbas": {
+      "canonical": "Terroristas de Donbás",
+      "type": "Organization",
+      "aliases": [
+        "donbas-terroristas"
+      ]
+    },
+    "encarcelamiento-cientifico-artico-rusia": {
+      "aliases": [
+        "russia-scientist-imprisonment"
+      ]
+    },
+    "abusador-online-encontrado": {
+      "aliases": [
+        "actriz-deepfakes-germania"
       ]
     }
   }

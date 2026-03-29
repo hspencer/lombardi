@@ -12,10 +12,11 @@
     <link rel="stylesheet" href="css/layout.css">
     <link rel="stylesheet" href="css/graph.css">
     <link rel="stylesheet" href="css/detail.css">
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 </head>
 <body>
     <header class="shell-header">
-        <h1 onclick="navigateTo(null)" style="cursor:pointer">Lom<strong>bardi</strong></h1>
+        <h1 style="cursor:pointer"><span onclick="navigateTo(null)">Lom<strong>bardi</strong></span><strong class="dispute-suffix" id="disputeSuffix">spute</strong><span class="dispute-plus" id="disputeDot" onclick="toggleDispute()" title="Lombardispute">+</span></h1>
         <div class="search-container">
             <input type="text" id="searchInput" placeholder="Buscar actor, evento..." autocomplete="off">
             <ul id="searchResults" class="search-results" hidden></ul>
@@ -31,9 +32,14 @@
                     <div class="process-bar" id="processBar"></div>
                 </div>
                 <div id="processDetails" class="process-details"></div>
+                <div class="process-section-divider"></div>
+                <div id="graphHealthDetails" class="process-details"></div>
                 <div class="process-actions">
                     <button id="fetchRssBtn" class="ingest-btn" onclick="fetchNewRSS()">
                         <i data-feather="rss"></i> <span id="fetchRssLabel"></span>
+                    </button>
+                    <button id="pruneBtn" class="ingest-btn" onclick="pruneGraph()">
+                        <i data-feather="scissors"></i> <span id="pruneBtnLabel"></span>
                     </button>
                     <button class="ingest-btn" onclick="toggleConsole()">
                         <i data-feather="terminal"></i> <span id="consoleBtnLabel"></span>
@@ -49,12 +55,14 @@
     <main class="split-view">
         <div class="split-left" id="graphPanel">
             <div class="graph-toolbar">
-                <button id="viewNodes" class="view-toggle" onclick="setView('nodes')"></button>
+                <button id="territoryToggle" class="view-toggle" onclick="toggleTerritory()" title="Territorio"><i data-feather="globe"></i></button>
                 <button id="viewTitles" class="view-toggle active" onclick="setView('titles')"></button>
+                <button id="viewNodes" class="view-toggle" onclick="setView('nodes')"></button>
                 <div class="degree-control">
                     <label id="degreeLabel"></label>
-                    <input type="range" id="degreeSlider" min="1" max="3" value="1" oninput="setDegree(+this.value)">
-                    <span id="degreeValue">2</span>
+                    <button class="degree-btn active" data-deg="1" onclick="setDegree(1)">1</button>
+                    <button class="degree-btn" data-deg="2" onclick="setDegree(2)">2</button>
+                    <button class="degree-btn" data-deg="3" onclick="setDegree(3)">3</button>
                 </div>
             </div>
             <svg id="graph"></svg>
@@ -73,7 +81,6 @@
                     <p id="detailEmptyMsg"></p>
                 </div>
                 <div class="detail-content" id="detailContent" hidden>
-                    <button class="detail-close" id="detailClose">&times;</button>
                     <div id="detailBody"></div>
                 </div>
             </div>

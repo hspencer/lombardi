@@ -50,7 +50,8 @@ Respond with ONLY valid JSON, no markdown:
     "event_type": "EVENT_TYPE",
     "date": "YYYY-MM-DD o null",
     "is_disputed": false,
-    "evidence_quote": "cita en idioma original"
+    "evidence_quote": "cita en idioma original",
+    "extraction_confidence": 0.85
   },
   "actors": [
     {
@@ -58,13 +59,17 @@ Respond with ONLY valid JSON, no markdown:
       "name": "Nombre",
       "type": "Person|Organization|Location",
       "description": "descriptor breve en español (rol, cargo, o qué es)",
-      "role": "verbo en español que describe su participación en el evento"
+      "role": "verbo en español que describe su participación en el evento",
+      "impact_direction": "positive|negative|neutral"
     }
   ],
   "actor_relations": [
     {"source": "actor-id", "relation": "PERTENECE_A|UBICADO_EN", "target": "actor-id"}
   ]
 }
+
+extraction_confidence: Rate your confidence in the overall extraction quality from 0.0 (very uncertain) to 1.0 (very clear, unambiguous news item).
+impact_direction: For each actor, indicate if their participation has a positive, negative, or neutral impact on the event.
 
 NEWS ITEM:
 `;
@@ -90,9 +95,10 @@ async function extractFromNews(newsItem) {
     });
 
     const data = await response.json();
+    if (data.error) throw new Error(`Ollama error: ${data.error}`);
     const text = (data.response || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in response');
+    if (!jsonMatch) throw new Error('No JSON in Ollama response');
     return JSON.parse(jsonMatch[0]);
 }
 
@@ -105,7 +111,8 @@ async function extractFromNewsFast(newsItem) {
 
     const schema = loadSchema();
     const prompt = buildPrompt(schema);
-    const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name || ''} (${newsItem.source_lang || ''})\nDate: ${newsItem.pubDate || newsItem.pub_date || ''}\nContent: ${(newsItem.description || '').slice(0, 3000)}`;
+    const content = newsItem.description || newsItem.summary || '';
+    const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name || ''} (${newsItem.source_lang || ''})\nDate: ${newsItem.pubDate || newsItem.pub_date || ''}\nContent: ${content.slice(0, 4000)}`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',

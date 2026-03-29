@@ -33,11 +33,18 @@ RULES:
 Respond with ONLY valid JSON:
 {
   "relation": "CONTRADICE|COMPLEMENTA|UNRELATED",
+  "contradiction_type": "fact|actor|attribute|narrative",
   "tension_score": 0.0,
   "analysis": "Breve explicacion de la diferencia o coincidencia",
   "claim_a_bias": "sesgo detectado en la fuente A (o 'neutral')",
   "claim_b_bias": "sesgo detectado en la fuente B (o 'neutral')"
 }
+
+contradiction_type (only when relation is CONTRADICE):
+- "fact": one says X happened, the other says it did not
+- "actor": they disagree on WHO did it
+- "attribute": they disagree on quantities, dates, or details
+- "narrative": same facts, but framed with opposing interpretations
 
 `;
 
@@ -140,6 +147,7 @@ async function writeRelation(client, claimAId, claimBId, resolution) {
                 MATCH (c1:Afirmacion {id: '${esc(claimAId)}'}), (c2:Afirmacion {id: '${esc(claimBId)}'})
                 MERGE (c1)-[r:CONTRADICE]->(c2)
                 SET r.tension_score = ${parseFloat(resolution.tension_score) || 0},
+                    r.contradiction_type = '${esc(resolution.contradiction_type || '')}',
                     r.analysis = '${esc(resolution.analysis || '')}',
                     r.detected_by = '${esc(RESOLVER_MODEL)}',
                     r.detected_at = '${new Date().toISOString()}'
