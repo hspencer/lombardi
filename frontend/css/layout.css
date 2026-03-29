@@ -36,10 +36,9 @@ body {
 
 /* Lombardispute animation */
 .dispute-suffix {
-    color: var(--node-evento, #C45D3E);
-    font-family: var(--font-sans);
-    font-weight: 400;
-    font-style: normal;
+    color: var(--ink-primary);
+    font-family: inherit;
+    font-weight: inherit;
     font-size: inherit;
     letter-spacing: inherit;
     display: none;
@@ -53,16 +52,15 @@ body {
 }
 /* Dispute trigger plus */
 .dispute-plus {
-    color: var(--node-evento, #C45D3E);
+    color: transparent;
     font-family: inherit;
     font-weight: inherit;
-    font-style: inherit;
     font-size: inherit;
     cursor: pointer;
-    transition: opacity 0.2s ease;
+    transition: color 0.2s ease;
 }
 .dispute-plus:hover {
-    opacity: 0.7;
+    color: var(--ink-primary);
 }
 .dispute-plus.hidden {
     display: none;

@@ -341,6 +341,11 @@ const Timeline = (() => {
         if (_container) _container.hidden = true;
     }
 
+    function isPlaying() { return _playing; }
+    function getPlayheadTime() {
+        return _selectedRange ? _selectedRange[1] : null;
+    }
+
     // --- Expose ---
-    return { update, destroy, getVisibleDateIds };
+    return { update, destroy, getVisibleDateIds, isPlaying, getPlayheadTime };
 })();

@@ -234,13 +234,35 @@ function initTheme() {
 
 // --- Ego Navigation ---
 
-function setDegree(deg) {
+async function setDegree(deg) {
     currentDegree = deg;
     document.querySelectorAll('.degree-btn').forEach(b => {
         b.classList.toggle('active', +b.dataset.deg === deg);
     });
+
+    // If requesting higher degree than what we have, fetch more data
+    if (focalId && lastEgoData && deg > 1) {
+        const maxLoaded = Math.max(...lastEgoData.nodes.map(n => n._degree || 0));
+        if (deg > maxLoaded) {
+            const graphEl = document.getElementById('graph');
+            graphEl.style.opacity = '0.4';
+            graphEl.style.transition = 'opacity 0.15s';
+            const res = await fetch(`${API}/api/ego?id=${encodeURIComponent(focalId)}&degree=${deg}`);
+            const data = await res.json();
+            graphEl.style.opacity = '1';
+            if (data.focal) {
+                lastEgoData = data;
+                if (currentView === 'titles') renderTitles(data);
+                else renderEgo(data);
+                if (typeof Timeline !== 'undefined') Timeline.update(data);
+                return;
+            }
+        }
+    }
+
     if (lastEgoData) {
-        applyVisibilityFilter();
+        if (currentView === 'titles') renderTitles(lastEgoData);
+        else renderEgo(lastEgoData);
         if (typeof Timeline !== 'undefined') Timeline.update(lastEgoData);
     }
 }
@@ -395,11 +417,18 @@ async function navigateTo(id, resetBreadcrumb) {
         document.getElementById('disputeSuffix').classList.remove('active');
     }
 
+    // Immediate loading feedback
+    const graphEl = document.getElementById('graph');
+    graphEl.style.opacity = '0.4';
+    graphEl.style.transition = 'opacity 0.15s';
+
     const previousFocalId = focalId;
     const base = `${API}/api/ego?id=${encodeURIComponent(id)}`;
-    const url = `${base}&degree=3`;
+    const url = `${base}&degree=1`;
     const res = await fetch(url);
     const data = await res.json();
+
+    graphEl.style.opacity = '1';
 
     if (!data.focal) return;
 
@@ -1366,6 +1395,9 @@ async function renderTitles(data) {
         return `M${sx},${sy} Q${mx},${my} ${tx},${ty}`;
     }
 
+    // Track play state for opacity reset
+    let _wasPlaying = false;
+
     // Panorama: arrange focal events in a circle, actors pulled toward their events
     const panoramaRadius = panoramaMode ? Math.min(width, height) * 0.38 : 0;
 
@@ -1438,6 +1470,34 @@ async function renderTitles(data) {
                 .attr('y', d => d.y - ((d._bboxH || 14) + 16) / (2 * _zoomK))
                 .attr('width', d => ((d._bboxW || 48) + 24) / _zoomK)
                 .attr('height', d => ((d._bboxH || 14) + 16) / _zoomK);
+
+            // Age-based fade: event titles decay over 1 week during play
+            if (typeof Timeline !== 'undefined' && Timeline.isPlaying()) {
+                const playhead = Timeline.getPlayheadTime();
+                if (playhead) {
+                    const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+                    const playMs = playhead.getTime();
+                    textEl.style('transition', 'opacity 0.3s ease')
+                        .attr('opacity', d => {
+                        // Only fade event titles
+                        if (d.label !== 'Evento' || !d.date || d.date === 'null')
+                            return d._degree === 2 ? 0.15 : (isFocal(d.id) ? 1 : 0.85);
+                        let dMs;
+                        try { dMs = new Date(d.date).getTime(); } catch { return 0.85; }
+                        if (isNaN(dMs) || dMs > playMs) return 0;
+                        const age = playMs - dMs;
+                        if (age <= 0) return 1;
+                        if (age >= WEEK_MS) return 0.06;
+                        return 1 - (age / WEEK_MS) * 0.94;
+                    });
+                }
+                _wasPlaying = true;
+            } else if (_wasPlaying) {
+                // Restore all opacities when play stops
+                textEl.style('transition', null)
+                    .attr('opacity', d => d._degree === 2 ? 0.15 : (isFocal(d.id) ? 1 : 0.85));
+                _wasPlaying = false;
+            }
         });
 
     // Only auto-zoom when there's no geo-anchor (map IS the frame when geo is active)
