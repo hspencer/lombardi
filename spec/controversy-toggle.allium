@@ -1,0 +1,471 @@
+// Allium v3 Specification
+// Feature: Botón de Controversias (Zap Toggle)
+// Purpose: Atajo para descubrir y visualizar controversias ocultas en el grafo
+
+spec ControversyToggle {
+  version "1.0.0"
+  domain "knowledge-graph"
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENTITIES
+  // ═══════════════════════════════════════════════════════════════════════
+
+  entity MapView {
+    mode: ViewMode                    // panorama | ego-graph | disputes
+    controversyModeActive: Bool       // true cuando el botón zap está encendido
+    visibleNodes: Set<NodeId>         // nodos actualmente renderizados
+    visibleEdges: Set<EdgeId>         // aristas actualmente renderizadas
+    currentFocusId: NodeId?           // null en panorama, nodeId en ego-graph
+    layoutMode: LayoutMode            // circular | geographic
+  }
+
+  entity ControversyButton {
+    state: ButtonState                // off | active
+    icon: IconType                    // zap-off | zap
+    opacity: Float                    // 0.5 (off) | 1.0 (active)
+  }
+
+  entity Node {
+    id: NodeId
+    type: NodeType                    // Actor | Evento | Afirmacion
+    hasControversies: Bool            // true si tiene al menos 1 arista CONTRADICE
+    controversyCount: Int             // número de aristas CONTRADICE
+  }
+
+  entity Edge {
+    id: EdgeId
+    source: NodeId
+    target: NodeId
+    type: EdgeType                    // CONTRADICE | REPORTA | SOSTIENE | ...
+    verificationStatus: VerificationStatus  // pending | confirmed | disputed | resolved
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ENUMS
+  // ═══════════════════════════════════════════════════════════════════════
+
+  enum ViewMode {
+    Panorama         // vista completa del grafo
+    EgoGraph         // subgrafo centrado en un nodo
+    Disputes         // subgrafo filtrado de controversias
+  }
+
+  enum ButtonState { Off | Active }
+
+  enum IconType { ZapOff | Zap }
+
+  enum LayoutMode { Circular | Geographic }
+
+  enum EdgeType {
+    CONTRADICE | REPORTA | SOSTIENE | PARTICIPA |
+    CAUSA | COMPLEMENTA | DESMIENTE | ACTUALIZA | INVOLUCRA
+  }
+
+  enum VerificationStatus {
+    Pending | Confirmed | Disputed | Resolved
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // SURFACES (Observable UI States)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  surface ControversyButtonOff(button: ControversyButton) {
+    button.state == Off
+    button.icon == ZapOff
+    button.opacity == 0.5
+
+    shows {
+      - Icon: zap-off with 50% opacity
+      - No border
+      - Muted color (--ink-muted)
+      - Hover: opacity increases to 70%
+    }
+  }
+
+  surface ControversyButtonActive(button: ControversyButton) {
+    button.state == Active
+    button.icon == Zap
+    button.opacity == 1.0
+
+    shows {
+      - Icon: zap with 100% opacity
+      - No border
+      - Highlighted color (--ink-primary)
+      - Bottom border with accent color (--accent)
+      - Same size as territory toggle (globe icon)
+    }
+  }
+
+  surface MapInNormalMode(map: MapView) {
+    map.controversyModeActive == false
+    map.visibleNodes contains all nodes in current view
+    map.visibleEdges contains all edge types
+
+    shows {
+      - All nodes in panorama or ego-graph
+      - All edge types with standard styling
+      - CONTRADICE edges: red color, no special prominence
+    }
+  }
+
+  surface MapInControversyMode(map: MapView) {
+    map.controversyModeActive == true
+    map.mode == Disputes
+    all nodes in map.visibleNodes have hasControversies == true
+    all edges in map.visibleEdges have type == CONTRADICE
+
+    shows {
+      - Only nodes with at least one CONTRADICE edge
+      - Only CONTRADICE edges (red, clickable)
+      - Disconnected clusters are visible
+      - If layoutMode == Circular: clusters arranged in circle with repulsion
+      - If layoutMode == Geographic: clusters use geographic coordinates
+      - Node styling: no special treatment
+      - Edge styling: red CONTRADICE edges, standard width
+    }
+  }
+
+  surface MapInControversyModeWithFocus(map: MapView, focusNode: Node) {
+    map.controversyModeActive == true
+    map.mode == EgoGraph
+    map.currentFocusId == focusNode.id
+    focusNode.hasControversies == true
+
+    shows {
+      - Ego-graph of focusNode (1, 2, or 3 degrees based on filter)
+      - Only nodes connected to focusNode via any edge type
+      - But only CONTRADICE edges are visible
+      - Other nodes may appear if connected, but only CONTRADICE edges show
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // TRIGGERS (User Actions)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  trigger ClickControversyButtonWhenOff(
+    button: ControversyButton,
+    map: MapView
+  ) {
+    when {
+      button.state == Off
+      user clicks controversy button
+    }
+
+    then {
+      // Backend call
+      fetch /api/disputes → disputesSubgraph
+
+      // Update button
+      button.state = Active
+      button.icon = Zap
+      button.opacity = 1.0
+
+      // Update map
+      map.controversyModeActive = true
+      map.mode = Disputes
+      map.currentFocusId = null
+      map.visibleNodes = nodes from disputesSubgraph where hasControversies == true
+      map.visibleEdges = edges from disputesSubgraph where type == CONTRADICE
+
+      // Reset navigation
+      clear breadcrumbs
+      set panoramaMode = true
+    }
+  }
+
+  trigger ClickControversyButtonWhenActive(
+    button: ControversyButton,
+    map: MapView
+  ) {
+    when {
+      button.state == Active
+      user clicks controversy button
+    }
+
+    then {
+      // Update button
+      button.state = Off
+      button.icon = ZapOff
+      button.opacity = 0.5
+
+      // Update map
+      map.controversyModeActive = false
+
+      // Return to normal panorama
+      navigate to panorama (null focus)
+    }
+  }
+
+  trigger NavigateToNodeWithControversies(
+    map: MapView,
+    targetNode: Node
+  ) {
+    when {
+      map.controversyModeActive == true
+      targetNode.hasControversies == true
+      user clicks on targetNode
+    }
+
+    then {
+      // Keep controversy mode active
+      map.mode = EgoGraph
+      map.currentFocusId = targetNode.id
+
+      // Fetch ego-graph
+      fetch /api/ego/${targetNode.id} → egoData
+
+      // Filter to show only CONTRADICE edges
+      map.visibleNodes = nodes from egoData
+      map.visibleEdges = edges from egoData where type == CONTRADICE
+
+      // Button stays active
+      button.state remains Active
+    }
+  }
+
+  trigger NavigateToNodeWithoutControversies(
+    map: MapView,
+    button: ControversyButton,
+    targetNode: Node
+  ) {
+    when {
+      map.controversyModeActive == true
+      targetNode.hasControversies == false
+      user clicks on targetNode
+    }
+
+    then {
+      // Automatically deactivate controversy mode
+      button.state = Off
+      button.icon = ZapOff
+      button.opacity = 0.5
+
+      map.controversyModeActive = false
+      map.mode = EgoGraph
+      map.currentFocusId = targetNode.id
+
+      // Show normal ego-graph with all edge types
+      fetch /api/ego/${targetNode.id} → egoData
+      map.visibleNodes = nodes from egoData
+      map.visibleEdges = all edges from egoData (all types)
+    }
+  }
+
+  trigger ToggleTerritoryModeWhileInControversyMode(
+    map: MapView
+  ) {
+    when {
+      map.controversyModeActive == true
+      user toggles territory (globe) button
+    }
+
+    then {
+      // Territory toggle works independently
+      if map.layoutMode == Circular {
+        map.layoutMode = Geographic
+        apply geographic forces to visible nodes
+      } else {
+        map.layoutMode = Circular
+        apply circular repulsion to disconnected clusters
+      }
+
+      // Controversy mode stays active
+      // Visible nodes and edges unchanged
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // RULES (Business Logic)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  rule ControversyModeOnlyShowsControversialNodes {
+    when map.controversyModeActive == true
+    then all nodes in map.visibleNodes must have hasControversies == true
+  }
+
+  rule ControversyModeOnlyShowsContradiceEdges {
+    when map.controversyModeActive == true
+    then all edges in map.visibleEdges must have type == CONTRADICE
+  }
+
+  rule ButtonStateReflectsMapState {
+    when map.controversyModeActive == true
+    then button.state == Active
+
+    when map.controversyModeActive == false
+    then button.state == Off
+  }
+
+  rule IconMatchesButtonState {
+    when button.state == Active
+    then button.icon == Zap and button.opacity == 1.0
+
+    when button.state == Off
+    then button.icon == ZapOff and button.opacity == 0.5
+  }
+
+  rule DisconnectedClustersAreVisible {
+    when {
+      map.controversyModeActive == true
+      exists nodes N1, N2 where:
+        - N1.hasControversies == true
+        - N2.hasControversies == true
+        - N1 and N2 are in different connected components
+    }
+    then {
+      both N1 and N2 are in map.visibleNodes
+      clusters are spatially separated
+    }
+  }
+
+  rule LayoutModeDoesNotAffectFiltering {
+    when map.controversyModeActive == true
+    then {
+      changing map.layoutMode (Circular ↔ Geographic)
+      does not change map.visibleNodes or map.visibleEdges
+    }
+  }
+
+  rule DeactivateWhenNavigatingToNonControversialNode {
+    when {
+      map.controversyModeActive == true
+      user navigates to node N
+      N.hasControversies == false
+    }
+    then {
+      map.controversyModeActive becomes false
+      button.state becomes Off
+      show normal ego-graph with all edge types
+    }
+  }
+
+  rule MaintainWhenNavigatingToControversialNode {
+    when {
+      map.controversyModeActive == true
+      user navigates to node N
+      N.hasControversies == true
+    }
+    then {
+      map.controversyModeActive remains true
+      button.state remains Active
+      show ego-graph but only CONTRADICE edges
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // INVARIANTS (Always True)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  invariant ButtonAndMapStateSync {
+    (button.state == Active) ↔ (map.controversyModeActive == true)
+  }
+
+  invariant NoNonControversialNodesInControversyMode {
+    when map.controversyModeActive == true
+    then not exists node N in map.visibleNodes where N.hasControversies == false
+  }
+
+  invariant NoNonContradiceEdgesInControversyMode {
+    when map.controversyModeActive == true
+    then not exists edge E in map.visibleEdges where E.type != CONTRADICE
+  }
+
+  invariant ButtonIconMatchesState {
+    (button.state == Active) → (button.icon == Zap)
+    and
+    (button.state == Off) → (button.icon == ZapOff)
+  }
+
+  invariant NavigationPreservesControversyLogic {
+    when {
+      map.controversyModeActive == true at time T
+      user navigates to node N at time T+1
+    }
+    then {
+      if N.hasControversies == true:
+        map.controversyModeActive == true at time T+1
+      else:
+        map.controversyModeActive == false at time T+1
+    }
+  }
+
+  invariant LayoutModeIndependentOfControversyMode {
+    changing map.layoutMode never triggers changes to:
+      - map.controversyModeActive
+      - button.state
+      - map.visibleNodes
+      - map.visibleEdges
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // CONTRACTS (API Behavior)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  contract FetchDisputesSubgraph {
+    endpoint: GET /api/disputes
+
+    returns {
+      nodes: Array<Node>     // nodes with hasControversies == true
+      edges: Array<Edge>     // edges with type == CONTRADICE
+      focalIds: Array<NodeId>?  // optional, for initial focus
+    }
+
+    ensures {
+      all nodes in response have at least one CONTRADICE edge
+      all edges in response have type == CONTRADICE
+      response may contain disconnected clusters
+    }
+  }
+
+  contract FetchEgoGraph {
+    endpoint: GET /api/ego/:nodeId
+
+    returns {
+      nodes: Array<Node>     // focal node + neighbors (1-3 degrees)
+      edges: Array<Edge>     // all edges between visible nodes
+    }
+
+    ensures {
+      focal node is always included
+      degree filtering (1, 2, 3) applies
+      all edge types are included in response
+      frontend filters to CONTRADICE if controversyModeActive == true
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // RATIONALE
+  // ═══════════════════════════════════════════════════════════════════════
+
+  rationale {
+    purpose: """
+      El botón de controversias es un atajo de descubrimiento que trae a la
+      superficie las contradicciones que de otro modo requerirían exploración
+      manual del grafo. No es un filtro excluyente sino un modo de énfasis que:
+
+      1. Filtra nodos: solo muestra los que tienen controversias
+      2. Filtra aristas: solo muestra CONTRADICE
+      3. Mantiene navegabilidad: puedes hacer click y explorar
+      4. Se desactiva inteligentemente: si llegas a un nodo sin controversias
+
+      La metáfora visual del "zap" comunica tensión/conflicto de forma clara.
+    """
+
+    design_decisions: [
+      "Usar zap/zap-off en lugar de filtro genérico para comunicar conflicto",
+      "Opacidad 50% cuando off para indicar estado disponible pero no activo",
+      "Sin borde para mantener consistencia con otros controles del toolbar",
+      "Desactivación automática al navegar a nodos sin controversias evita estados confusos",
+      "Clusters desconectados visibles para mostrar controversias aisladas",
+      "Layout circular cuando territorio off para separar clusters visualmente"
+    ]
+
+    edge_cases: [
+      "Qué pasa si el subgrafo de controversias está vacío → botón no se activa",
+      "Qué pasa si estoy en ego-graph y activo controversias → vuelve a panorama",
+      "Qué pasa si navego con breadcrumbs mientras controversias está activo → se mantiene si el nodo tiene controversias",
+      "Qué pasa si cambio el grado (1→2→3) mientras controversias activo → se aplica al filtrado de controversias"
+    ]
+  }
+}

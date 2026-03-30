@@ -410,13 +410,9 @@ async function navigateTo(id, resetBreadcrumb) {
         return;
     }
 
-    // Exit panorama/dispute on specific node navigation
+    // Exit panorama on specific node navigation
     panoramaMode = false;
     focalIds = new Set();
-    if (disputeMode) {
-        disputeMode = false;
-        document.getElementById('disputeSuffix').classList.remove('active');
-    }
 
     // Immediate loading feedback
     const graphEl = document.getElementById('graph');
@@ -432,6 +428,20 @@ async function navigateTo(id, resetBreadcrumb) {
     graphEl.style.opacity = '1';
 
     if (!data.focal) return;
+
+    // Check if focal node has controversies (CONTRADICE edges)
+    const hasControversies = data.edges && data.edges.some(e => e.type === 'CONTRADICE');
+
+    // Per Allium spec: deactivate dispute mode if node has no controversies
+    if (disputeMode && !hasControversies) {
+        disputeMode = false;
+        const btn = document.getElementById('disputeToggle');
+        btn.classList.remove('active');
+        btn.innerHTML = '<i data-feather="zap-off"></i>';
+        feather.replace();
+    }
+    // Keep dispute mode active if node has controversies
+    // (button stays in active state)
 
     focalId = data.focal.id;
     lastEgoData = data;
@@ -519,7 +529,12 @@ async function renderEgo(data) {
     svg.call(zoomBehavior);
 
     const nodes = data.nodes;
-    const edges = data.edges;
+    let edges = data.edges;
+
+    // Per Allium spec: in dispute mode, only show CONTRADICE edges
+    if (disputeMode && edges) {
+        edges = edges.filter(e => e.type === 'CONTRADICE');
+    }
 
     // Compute connection counts per node
     const connCount = {};
@@ -947,9 +962,10 @@ async function toggleDispute() {
     const btn = document.getElementById('disputeToggle');
     const icon = btn.querySelector('i');
 
-    // Toggle button state and icon
+    // Toggle button state and swap icon
     btn.classList.toggle('active', disputeMode);
-    icon.setAttribute('data-feather', disputeMode ? 'zap' : 'zap-off');
+    const iconName = disputeMode ? 'zap' : 'zap-off';
+    btn.innerHTML = `<i data-feather="${iconName}"></i>`;
     feather.replace();
 
     if (disputeMode) {
@@ -1059,6 +1075,11 @@ async function renderTitles(data) {
 
     let nodes = data.nodes;
     let edges = data.edges;
+
+    // Per Allium spec: in dispute mode, only show CONTRADICE edges
+    if (disputeMode && edges) {
+        edges = edges.filter(e => e.type === 'CONTRADICE');
+    }
 
     // Connection counts
     const connCount = {};
