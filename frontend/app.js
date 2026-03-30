@@ -193,7 +193,8 @@ function applyStaticI18n() {
     document.getElementById('feedSortRelevance').textContent = t('feed.sort.relevance');
     document.getElementById('loadMoreBtn').textContent = t('feed.loadMore');
     // Dispute suffix
-    document.getElementById('disputeSuffix').textContent = currentLang === 'es' ? 'sputa' : 'spute';
+    const _ds = document.getElementById('disputeSuffix');
+    if (_ds) _ds.textContent = currentLang === 'es' ? 'sputa' : 'spute';
     // Process panel
     document.getElementById('processPanelTitle').textContent = t('process.title');
     document.getElementById('fetchRssLabel').textContent = t('process.fetch');

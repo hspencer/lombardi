@@ -399,10 +399,10 @@ body {
     right: var(--space-sm);
     z-index: 5;
     background: none;
-    border: 1px solid var(--border-default);
-    border-radius: 4px;
-    padding: 6px;
-    color: var(--ink-faint);
+    border: none;
+    padding: 4px var(--space-md);
+    color: var(--ink-muted);
+    opacity: 0.5;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -411,19 +411,12 @@ body {
 }
 
 .dispute-toggle:hover {
-    border-color: var(--border-active);
-    color: var(--ink-muted);
+    opacity: 0.7;
 }
 
 .dispute-toggle.active {
-    background: var(--tag-evento-bg);
-    border-color: var(--edge-contradice);
+    opacity: 1;
     color: var(--edge-contradice);
-}
-
-.dispute-toggle svg {
-    width: 18px;
-    height: 18px;
 }
 
 /* --- Degree 3-state switch --- */
@@ -510,6 +503,18 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* --- Console drawer --- */
+/* --- Close button (shared) --- */
+.btn-close {
+    background: none;
+    border: none;
+    color: var(--ink-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+.btn-close:hover { color: var(--ink-primary); }
+
 .console-drawer {
     position: fixed;
     bottom: 0;
@@ -517,7 +522,7 @@ body {
     right: 0;
     height: 280px;
     background: #0a0c10;
-    border-top: 1px solid var(--border-default);
+    border-top: 1px solid rgba(255,255,255,0.06);
     z-index: 200;
     display: flex;
     flex-direction: column;
@@ -535,9 +540,6 @@ body {
     flex-shrink: 0;
 }
 
-.console-header .detail-close {
-    position: static;
-}
 
 .console-header h4 {
     font-size: var(--font-size-sm);
