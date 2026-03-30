@@ -52,7 +52,7 @@ body {
 }
 /* Dispute trigger plus */
 .dispute-plus {
-    color: transparent;
+    color: var(--ink-tertiary);
     font-family: inherit;
     font-weight: inherit;
     font-size: inherit;

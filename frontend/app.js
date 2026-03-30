@@ -618,6 +618,12 @@ async function renderEgo(data) {
         d3.select(this).select('path:first-child')
             .attr('stroke-width', edgeVisual(d.type).width)
             .attr('opacity', isFocal ? 0.4 : 0.08);
+    }).on('click', function (e, d) {
+        // Show verification panel for CONTRADICE edges
+        if (d.type === 'CONTRADICE' && typeof showEdgeVerification === 'function') {
+            e.stopPropagation();
+            showEdgeVerification(d);
+        }
     });
 
     // Curve generator helper
@@ -1119,6 +1125,35 @@ async function renderTitles(data) {
             const t = typeof d.target === 'object' ? d.target.id : d.target;
             return (isFocal(s) || isFocal(t)) ? 0.35 : 0.08;
         });
+
+    // Invisible fat path for hover/click in titles mode
+    const linkHit_t = linkG_t.append('path')
+        .attr('stroke', 'transparent')
+        .attr('stroke-width', 16)
+        .attr('fill', 'none')
+        .attr('cursor', 'pointer');
+
+    // Hover and click events on edges (titles mode)
+    linkG_t.on('mouseenter', function (e, d) {
+        d3.select(this).select('text').attr('opacity', 1);
+        d3.select(this).select('path:first-child')
+            .attr('stroke-width', edgeVisual(d.type).width + 2)
+            .attr('opacity', 1);
+    }).on('mouseleave', function (e, d) {
+        const s = typeof d.source === 'object' ? d.source.id : d.source;
+        const t = typeof d.target === 'object' ? d.target.id : d.target;
+        const isFocalEdge = isFocal(s) || isFocal(t);
+        d3.select(this).select('text').attr('opacity', isFocalEdge ? 0.5 : 0);
+        d3.select(this).select('path:first-child')
+            .attr('stroke-width', Math.max(edgeVisual(d.type).width * 0.7, 0.5))
+            .attr('opacity', isFocalEdge ? 0.35 : 0.08);
+    }).on('click', function (e, d) {
+        // Show verification panel for CONTRADICE edges
+        if (d.type === 'CONTRADICE' && typeof showEdgeVerification === 'function') {
+            e.stopPropagation();
+            showEdgeVerification(d);
+        }
+    });
 
     // Edge labels for focal edges
     const edgeLabel_t = linkG_t.append('text')
