@@ -17,7 +17,7 @@
 </head>
 <body>
     <header class="shell-header">
-        <h1 style="cursor:pointer"><span onclick="navigateTo(null)">Lom<strong>bardi</strong></span><strong class="dispute-suffix" id="disputeSuffix">spute</strong><span class="dispute-plus" id="disputeDot" onclick="toggleDispute()" title="Lombardispute">+</span></h1>
+        <h1 style="cursor:pointer" onclick="navigateTo(null)">Lom<strong>bardi</strong></h1>
         <div class="search-container">
             <input type="text" id="searchInput" placeholder="Buscar actor, evento..." autocomplete="off">
             <ul id="searchResults" class="search-results" hidden></ul>
@@ -67,6 +67,9 @@
                 </div>
             </div>
             <svg id="graph"></svg>
+            <button id="disputeToggle" class="dispute-toggle" onclick="toggleDispute()" title="Controversias">
+                <i data-feather="zap-off"></i>
+            </button>
             <div id="timelineBar" class="timeline-bar" hidden></div>
             <nav id="breadcrumbs" class="breadcrumbs"></nav>
         </div>

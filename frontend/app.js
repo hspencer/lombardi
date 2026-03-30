@@ -943,11 +943,13 @@ function autoZoom(nodes, zoomBehavior, width, height) {
 
 async function toggleDispute() {
     disputeMode = !disputeMode;
-    const suffix = document.getElementById('disputeSuffix');
-    const plus = document.getElementById('disputeDot');
-    suffix.classList.toggle('active', disputeMode);
-    plus.classList.toggle('hidden', disputeMode);
-    suffix.onclick = disputeMode ? () => toggleDispute() : null;
+    const btn = document.getElementById('disputeToggle');
+    const icon = btn.querySelector('i');
+
+    // Toggle button state and icon
+    btn.classList.toggle('active', disputeMode);
+    icon.setAttribute('data-feather', disputeMode ? 'zap' : 'zap-off');
+    feather.replace();
 
     if (disputeMode) {
         // Fetch dispute subgraph
@@ -960,8 +962,9 @@ async function toggleDispute() {
             const data = await res.json();
             if (!data.nodes || !data.nodes.length) {
                 disputeMode = false;
-                suffix.classList.remove('active');
-                plus.classList.remove('hidden');
+                btn.classList.remove('active');
+                icon.setAttribute('data-feather', 'zap-off');
+                feather.replace();
                 panoramaMode = false;
                 return;
             }
@@ -971,8 +974,9 @@ async function toggleDispute() {
         } catch (e) {
             console.error('Dispute fetch failed:', e);
             disputeMode = false;
-            suffix.classList.remove('active');
-            plus.classList.remove('hidden');
+            btn.classList.remove('active');
+            icon.setAttribute('data-feather', 'zap-off');
+            feather.replace();
             panoramaMode = false;
         }
     } else {

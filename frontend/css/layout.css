@@ -34,38 +34,6 @@ body {
 
 .shell-header h1 strong { font-weight: 400; }
 
-/* Lombardispute animation */
-.dispute-suffix {
-    color: var(--ink-primary);
-    font-family: inherit;
-    font-weight: inherit;
-    font-size: inherit;
-    letter-spacing: inherit;
-    display: none;
-}
-.dispute-suffix.active {
-    display: inline;
-    cursor: pointer;
-}
-.dispute-suffix.active:hover {
-    text-decoration: underline;
-}
-/* Dispute trigger plus */
-.dispute-plus {
-    color: var(--ink-tertiary);
-    font-family: inherit;
-    font-weight: inherit;
-    font-size: inherit;
-    cursor: pointer;
-    transition: color 0.2s ease;
-}
-.dispute-plus:hover {
-    color: var(--ink-primary);
-}
-.dispute-plus.hidden {
-    display: none;
-}
-
 .header-controls {
     display: flex;
     align-items: center;
@@ -422,6 +390,40 @@ body {
     font-family: var(--font-sans);
     text-transform: uppercase;
     letter-spacing: .2ex;
+}
+
+/* --- Dispute toggle button (zap) --- */
+.dispute-toggle {
+    position: absolute;
+    top: var(--space-sm);
+    right: var(--space-sm);
+    z-index: 5;
+    background: none;
+    border: 1px solid var(--border-default);
+    border-radius: 4px;
+    padding: 6px;
+    color: var(--ink-faint);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--duration-fast) var(--ease-default);
+}
+
+.dispute-toggle:hover {
+    border-color: var(--border-active);
+    color: var(--ink-muted);
+}
+
+.dispute-toggle.active {
+    background: var(--tag-evento-bg);
+    border-color: var(--edge-contradice);
+    color: var(--edge-contradice);
+}
+
+.dispute-toggle svg {
+    width: 18px;
+    height: 18px;
 }
 
 /* --- Degree 3-state switch --- */
