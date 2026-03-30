@@ -82,7 +82,13 @@
           "tension_score":      { "type": "number", "minimum": 0, "maximum": 1 },
           "contradiction_type": { "type": "string", "enum": ["fact", "actor", "attribute", "narrative"], "description": "Tipo de contradicción: hecho, actor, atributo o narrativa." },
           "analysis":           { "type": "string" },
-          "detected_by":        { "type": "string" }
+          "detected_by":        { "type": "string" },
+          "detected_at":        { "type": "string", "format": "date-time", "description": "Timestamp de detección ISO 8601." },
+          "verification_status": { "type": "string", "enum": ["pending", "confirmed", "disputed", "resolved"], "default": "pending", "description": "Estado de verificación colaborativa." },
+          "consensus_score":    { "type": "number", "minimum": 0, "maximum": 1, "default": 0, "description": "Consenso comunitario ponderado (0-1)." },
+          "vote_agree_count":   { "type": "integer", "default": 0, "description": "Usuarios que confirman la contradicción." },
+          "vote_disagree_count": { "type": "integer", "default": 0, "description": "Usuarios que la desafían." },
+          "vote_uncertain_count": { "type": "integer", "default": 0, "description": "Usuarios inciertos." }
         },
         "visual": { "color": "#E74C3C", "style": "solid", "width": 5, "force_distance": 300 }
       },

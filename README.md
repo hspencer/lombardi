@@ -12,18 +12,32 @@ Es un visualizador de noticias especial, inspirado y en homenaje a [Mark Lombard
 
 ## Funcionalidades
 
-- **Vista panorama** — Landing con los 10 eventos más recientes y sus conexiones, timeline brushable con play
-- **Ingesta de noticias** — Feeds RSS configurables con toggle on/off por fuente
-- **Temas de interés** — Filtra el flujo noticioso por queries relevantes para el investigador
+### 🔥 Sistema de Controversias (Core)
+- **Detección automática de contradicciones** — LLMs locales comparan eventos de distintas fuentes
+- **Visualización de tensiones** — Aristas `CONTRADICE` con tension_score, análisis y tipo
+- **Modo disputa** — Vista dedicada del subgrafo de eventos contradictorios
+- **Roadmap colaborativo** — [Verificación ciudadana, votación ponderada, evidencias múltiples →](docs/controversias.md)
+
+### 📰 Ingesta y Procesamiento
+- **Feeds RSS configurables** — Toggle on/off por fuente, temas de interés personalizables
 - **Extracción ontológica** — LLMs locales (Ollama) extraen actores, eventos y relaciones
 - **Grafo de conocimiento** — Apache AGE (PostgreSQL + Cypher) como base
+
+### 🌐 Visualización
+- **Vista panorama** — Landing con eventos recientes y timeline brushable con play
 - **Visualización egocéntrica** — Grafo navegable con foco dinámico y grados de separación
-- **Detección de contradicciones** — Identifica tensiones entre fuentes sobre un mismo evento
-- **Edición de nodos** — Tipos, aliases, merge, descripción, eliminación, agregar relaciones
+- **Dos modos de renderizado** — Nodos circulares o tipográficos (collision de bounding box)
+
+### ✏️ Edición y Enriquecimiento
+- **Edición de nodos** — Tipos, aliases, merge, descripción, eliminación
+- **Gestión de relaciones** — Crear aristas manualmente con metadatos
 - **Enriquecimiento** — Wikidata + Claude API (on-demand, streaming)
-- **Gestión de fuentes** — CRUD completo de feeds RSS y temas de interés
+- **Normalización** — Sistema de aliases para evitar duplicados
+
+### 🛠️ UX
 - **i18n** — Español / English con detección automática
 - **Tema claro/oscuro**
+- **Breadcrumbs semánticos** — Rastro de navegación entre nodos
 
 ## Stack
 
@@ -116,9 +130,12 @@ Definida en [`data/schema.json`](data/schema.json):
 
 ## Documentación
 
+- [`docs/controversias.md`](docs/controversias.md) — **Sistema de Controversias** (visión, roadmap, arquitectura colaborativa)
+- [`docs/modelo-de-datos.md`](docs/modelo-de-datos.md) — Modelo de datos completo (diagramas Mermaid, ontología, relaciones)
 - [`docs/local-deploy.md`](docs/local-deploy.md) — Instalación local
-- [`backlog.md`](backlog.md) — Roadmap
-- [`data/schema.json`](data/schema.json) — Ontología auditable
+- [`backlog.md`](backlog.md) — Roadmap general del proyecto
+- [`data/schema.json`](data/schema.json) — Ontología auditable (fuente de verdad)
+- [`spec/controversy-model.allium`](spec/controversy-model.allium) — Especificación formal Allium v3
 
 ## Licencia
 

@@ -472,13 +472,6 @@
         "actriz-deepfakes-germania"
       ]
     },
-    "new-zealand": {
-      "canonical": "New Zealand",
-      "type": "Location",
-      "aliases": [
-        "Aotearoa"
-      ]
-    },
     "pentagon_whistleblower": {
       "canonical": "Pentágono",
       "type": "Organization",
@@ -486,6 +479,14 @@
         "pentagon",
         "pentagonoo",
         "pentagono"
+      ]
+    },
+    "nueva-zelanda": {
+      "canonical": "New Zealand",
+      "type": "Location",
+      "aliases": [
+        "Aotearoa",
+        "new-zealand"
       ]
     }
   }
