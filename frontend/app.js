@@ -100,8 +100,11 @@ function nodeRadius(d) {
     // Scale by degree (connections)
     const degree = d._connectionCount || 1;
     const scale = Math.min(Math.sqrt(degree) * 0.6, 3);
-    if (d.id === focalId) return base * 2 + scale;
-    return base + scale;
+    // news_count bonus for Eventos (multi-source attention)
+    const newsBonus = (d.label === 'Evento' && d.news_count)
+        ? Math.min(Math.sqrt(d.news_count) * 0.5, 5) : 0;
+    if (d.id === focalId) return base * 2 + scale + newsBonus;
+    return base + scale + newsBonus;
 }
 
 function nodeColor(d) { return typeColor(d).fill; }
@@ -176,6 +179,9 @@ function applyStaticI18n() {
     document.getElementById('tabFeed').textContent = t('tab.feed');
     document.getElementById('tabNode').textContent = t('tab.node');
     document.getElementById('tabSources').textContent = t('tab.sources');
+    document.getElementById('tabLandscapeLabel').textContent = t('landscape.title');
+    document.getElementById('sweepLabel').textContent = t('landscape.sweep');
+    document.getElementById('acceptAllLabel').textContent = t('landscape.acceptAll');
     // Sources panel
     document.getElementById('sourcesFeedsTitle').textContent = t('sources.feeds');
     document.getElementById('sourcesTopicsTitle').textContent = t('sources.topics');
@@ -2241,7 +2247,7 @@ async function showDetail(node) {
                     <span class="news-title-text">${trimTitle(n.title)}</span>
                     ${n.link ? `<a class="news-external" href="${n.link}" target="_blank" rel="noopener" title="${t('detail.news.openSource')}"><i data-feather="external-link"></i></a>` : ''}
                 </div>
-                ${n._eventName ? `<div class="news-event-tag">${n._eventType ? n._eventType.replace(/_/g, ' ') + ': ' : ''}${n._eventName}</div>` : ''}
+                ${n._eventName ? `<div class="news-event-tag">${n._eventType ? tEventType(n._eventType) + ': ' : ''}${n._eventName}</div>` : ''}
                 ${n._evidenceQuote ? `<blockquote class="news-evidence">${n._evidenceQuote}</blockquote>` : ''}
                 ${n._role ? `<div class="news-role">${n._role}</div>` : ''}
                 ${n.description ? `<p class="news-desc">${(n.description || '').slice(0, 200)}${(n.description || '').length > 200 ? '...' : ''}</p>` : ''}
@@ -2266,7 +2272,7 @@ function renderDetail(node) {
                 ${eventTypes.map(et => `<option value="${et}" ${et === node.event_type ? 'selected' : ''}>${tEventType(et)}</option>`).join('')}
             </select>
             ${node.date && node.date !== 'null' && node.date !== '' ? `<span class="event-date-badge">${formatDate(node.date)}</span>` : ''}
-            ${node.is_disputed ? `<span class="disputed-badge">${t('detail.disputed')}</span>` : ''}
+            ${node.is_disputed ? `<span class="disputed-badge" onclick="openDisputePanel('${node.id}')" title="${t('detail.disputed.hint')}">${t('detail.disputed')}</span>` : ''}
         </div>`;
     } else {
         const nodeTypes = ['Person', 'Organization', 'Location', 'Object'];
@@ -2299,6 +2305,7 @@ function renderDetail(node) {
     if (label === 'Evento') {
         if (node.evidence_quote) html += `<blockquote class="evidence-quote">${node.evidence_quote}</blockquote>`;
         if (node.source) html += `<div class="detail-meta"><i data-feather="radio" class="meta-icon"></i> ${node.source}</div>`;
+        if (node.news_count > 1) html += `<div class="detail-meta"><i data-feather="layers" class="meta-icon"></i> ${node.news_count} ${t('detail.sources')}</div>`;
     }
 
     // 4. ALIASES
@@ -2492,7 +2499,7 @@ function setupRelationSearch() {
                 const results = await res.json();
                 const container = document.getElementById('relationSearchResults');
                 if (!results.length) {
-                    container.innerHTML = `<div class="relation-search-item" style="opacity:0.5">${t('search.noResults') || 'Sin resultados'}</div>`;
+                    container.innerHTML = `<div class="relation-search-item" style="opacity:0.5">${t('search.noResults')}</div>`;
                     container.hidden = false;
                     return;
                 }
@@ -2616,7 +2623,7 @@ async function reprocessNode(nodeId) {
     }
 
     try {
-        setProgress(10, 'Buscando relaciones latentes...');
+        setProgress(10, t('discover.searching'));
 
         const response = await fetch(`${API}/api/node/discover`, {
             method: 'POST',
@@ -2648,7 +2655,7 @@ async function reprocessNode(nodeId) {
                         const reason = msg.reason || msg.edge?.role || '';
                         setProgress(Math.min(30 + discovered * 10, 90), `+${discovered}: ${msg.targetNode?.name || msg.edge?.target} (${reason})`);
                     } else if (msg.type === 'done') {
-                        setProgress(95, 'Actualizando grafo...');
+                        setProgress(95, t('discover.updating'));
                     } else if (msg.type === 'error') {
                         setProgress(100, 'Error: ' + msg.message);
                     }
@@ -2659,8 +2666,8 @@ async function reprocessNode(nodeId) {
         // Reload the ego to show new connections
         await navigateTo(nodeId);
         setProgress(100, discovered > 0
-            ? `✓ ${discovered} relaciones descubiertas`
-            : 'Sin relaciones latentes nuevas');
+            ? `✓ ${discovered} ${t('discover.found')}`
+            : t('discover.none'));
     } catch (err) {
         setProgress(100, 'Error: ' + err.message);
     }
@@ -2677,6 +2684,34 @@ async function reprocessNode(nodeId) {
 }
 
 // --- Node editing ---
+
+async function openDisputePanel(eventId) {
+    // Find CONTRADICE edges involving this event from the current graph data
+    const contraEdges = (lastEgoData?.edges || []).filter(e =>
+        e.type === 'CONTRADICE' && (
+            (typeof e.source === 'object' ? e.source.id : e.source) === eventId ||
+            (typeof e.target === 'object' ? e.target.id : e.target) === eventId
+        )
+    );
+    if (contraEdges.length > 0 && typeof showEdgeVerification === 'function') {
+        showEdgeVerification(contraEdges[0]);
+    } else {
+        // No CONTRADICE edge in current view — navigate to event to load its ego
+        await navigateTo(eventId);
+        // Try again after navigation loads the graph
+        setTimeout(() => {
+            const edges = (lastEgoData?.edges || []).filter(e =>
+                e.type === 'CONTRADICE' && (
+                    (typeof e.source === 'object' ? e.source.id : e.source) === eventId ||
+                    (typeof e.target === 'object' ? e.target.id : e.target) === eventId
+                )
+            );
+            if (edges.length > 0 && typeof showEdgeVerification === 'function') {
+                showEdgeVerification(edges[0]);
+            }
+        }, 1000);
+    }
+}
 
 async function updateNodeType(nodeId, newValue, field) {
     const body = { id: nodeId };
@@ -2858,11 +2893,15 @@ function jumpTo(id) {
     navigateTo(id, true); // Search always resets breadcrumb
 }
 
+// --- Batch news state ---
+let _batchItems = [];        // annotated results from detect-anchors
+let _batchSelected = new Set(); // selected link values
+let _batchExtraction = null; // extraction data during review
+
 async function searchWebNews(query) {
     document.getElementById('searchResults').hidden = true;
     document.getElementById('searchInput').value = '';
 
-    // Switch to feed tab to show results
     switchRightTab('feed');
     const feed = document.getElementById('newsFeed');
     feed.innerHTML = `<div class="search-loading">${t('searchingWeb')} "${query}"...</div>`;
@@ -2877,36 +2916,312 @@ async function searchWebNews(query) {
             return;
         }
 
-        feed.innerHTML = `<h4 class="web-results-header">${t('webResults')} "${query}" (${items.length})</h4>` +
-            items.map(item => {
-                const date = item.pubDate ? new Date(item.pubDate).toLocaleDateString() : '';
-                const src = typeof item.source === 'object' ? item.source['#text'] || '' : item.source || '';
-                return `<div class="news-card web-result">
-                    <div class="news-meta">
-                        <span class="news-source">${src}</span>
-                        <span class="news-date">${date}</span>
-                    </div>
-                    <div class="news-title">${trimTitle(item.title)}</div>
-                    <div class="news-actions">
-                        <button class="ingest-btn" onclick="ingestFromWeb(this, '${esc(item.title)}', '${esc(item.link)}', '${esc(src)}', '${esc(item.pubDate)}')">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"></polyline><line x1="12" y1="12" x2="12" y2="21"></line><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"></path></svg>
-                            ${t('ingest')}
-                        </button>
-                        <a href="${item.link}" target="_blank" class="news-link-external">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-                        </a>
-                    </div>
-                </div>`;
-            }).join('');
+        // Detect anchors for batch selection
+        feed.innerHTML = `<div class="search-loading">${t('batch.fetchingArticles')}...</div>`;
+        const anchorRes = await fetch(`${API}/api/news/detect-anchors`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items, focalNodeId: focalId || null })
+        });
+        const anchorData = await anchorRes.json();
+        _batchItems = anchorData.results || items;
+        _batchSelected = new Set(anchorData.suggested || []);
+
+        renderBatchGrid(query);
     } catch (err) {
         feed.innerHTML = `<div class="search-loading">Error: ${err.message}</div>`;
     }
 }
 
+function renderBatchGrid(query) {
+    const feed = document.getElementById('newsFeed');
+    const count = _batchSelected.size;
+
+    const selectionBar = `<div class="batch-selection-bar">
+        <span class="batch-selection-count" id="batchCount">${count} ${t('batch.selected')}</span>
+        <button class="batch-extract-btn" id="batchExtractBtn" onclick="startBatchExtraction()" ${count < 1 ? 'disabled' : ''}>
+            ${t('batch.extract')}
+        </button>
+    </div>`;
+
+    const cards = _batchItems.map(item => {
+        const date = item.pubDate ? new Date(item.pubDate).toLocaleDateString() : '';
+        const src = typeof item.source === 'object' ? item.source['#text'] || '' : item.source || '';
+        const selected = _batchSelected.has(item.link);
+        const suggested = (selected && _batchSelected.size <= 12) ? ' suggested' : '';
+        const spanRow = (item.relevance_score || 0) > 0.6 ? ' style="grid-row: span 2"' : '';
+
+        const anchors = (item.anchor_nodes || []).slice(0, 5).map(id => {
+            // Try to find type from graph data
+            const node = _batchItems._anchorTypes?.[id];
+            const typeClass = node ? ` type-${node}` : '';
+            return `<span class="anchor-badge${typeClass}">${id.replace(/-/g, ' ')}</span>`;
+        }).join('');
+
+        return `<div class="batch-news-card${selected ? ' selected' : ''}${suggested}" data-link="${esc(item.link)}" onclick="toggleBatchItem(this)"${spanRow}>
+            <div class="batch-checkbox"></div>
+            <div class="batch-card-header">
+                <span class="batch-card-source">${src}</span>
+                <span class="batch-card-date">${date}</span>
+            </div>
+            <div class="batch-card-title">${trimTitle(item.title)}</div>
+            ${anchors ? `<div class="batch-card-anchors">${anchors}</div>` : ''}
+            <div class="batch-card-relevance"><div class="batch-card-relevance-fill" style="width:${Math.round((item.relevance_score || 0) * 100)}%"></div></div>
+        </div>`;
+    }).join('');
+
+    feed.innerHTML = `<h4 class="web-results-header">${t('webResults')} "${query}" (${_batchItems.length})</h4>${selectionBar}<div class="batch-news-grid">${cards}</div>`;
+}
+
+function toggleBatchItem(el) {
+    const link = el.dataset.link;
+    if (_batchSelected.has(link)) {
+        _batchSelected.delete(link);
+        el.classList.remove('selected');
+    } else {
+        if (_batchSelected.size >= 12) return; // max
+        _batchSelected.add(link);
+        el.classList.add('selected');
+    }
+    // Update counter and button
+    const count = _batchSelected.size;
+    const countEl = document.getElementById('batchCount');
+    const btnEl = document.getElementById('batchExtractBtn');
+    if (countEl) countEl.textContent = `${count} ${t('batch.selected')}`;
+    if (btnEl) btnEl.disabled = count < 1;
+}
+
+async function startBatchExtraction() {
+    const selected = _batchItems.filter(item => _batchSelected.has(item.link));
+    if (selected.length < 1) return;
+
+    const feed = document.getElementById('newsFeed');
+    const btn = document.getElementById('batchExtractBtn');
+    if (btn) { btn.disabled = true; btn.textContent = t('batch.extracting'); }
+
+    // Replace selection bar with two-phase progress
+    const bar = document.querySelector('.batch-selection-bar');
+    if (bar) {
+        bar.innerHTML = `
+        <div class="batch-progress-phase" id="batchPhase1">
+            <div class="batch-progress-info">
+                <span class="batch-progress-text">${t('batch.fetchingArticles')}</span>
+                <span class="batch-progress-count" id="batchDlCount">0/${selected.length}</span>
+            </div>
+            <div class="batch-progress-bar"><div class="batch-progress-fill" id="batchDlFill"></div></div>
+        </div>
+        <div class="batch-progress-phase batch-phase-waiting" id="batchPhase2">
+            <div class="batch-progress-info">
+                <span class="batch-progress-text" id="batchLlmText">${t('batch.llmWaiting')}</span>
+                <span class="batch-progress-count" id="batchLlmTimer"></span>
+            </div>
+            <div class="batch-progress-bar"><div class="batch-progress-fill batch-progress-indeterminate" id="batchLlmFill"></div></div>
+        </div>`;
+        bar.classList.add('batch-progress-active');
+    }
+    let dlCount = 0;
+    let llmTimer = null;
+
+    try {
+        const response = await fetch(`${API}/api/news/process-batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                items: selected.map(s => ({ title: s.title, link: s.link, source: s.source, pubDate: s.pubDate, description: s.description || '' })),
+                focalNodeId: focalId || null,
+                commit: false
+            })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const msg = JSON.parse(line.slice(6));
+                    if (msg.type === 'status') {
+                        dlCount++;
+                        const dlFill = document.getElementById('batchDlFill');
+                        const dlCountEl = document.getElementById('batchDlCount');
+                        const pct = Math.round((dlCount / selected.length) * 100);
+                        if (dlFill) dlFill.style.width = pct + '%';
+                        if (dlCountEl) dlCountEl.textContent = `${dlCount}/${selected.length}`;
+                    } else if (msg.type === 'llm_start') {
+                        // Phase 1 complete, start phase 2
+                        const p1 = document.getElementById('batchPhase1');
+                        const p2 = document.getElementById('batchPhase2');
+                        if (p1) p1.classList.add('batch-phase-done');
+                        if (p2) p2.classList.remove('batch-phase-waiting');
+                        const llmText = document.getElementById('batchLlmText');
+                        if (llmText) llmText.textContent = t('batch.llmExtracting').replace('{model}', msg.model || 'Claude');
+                        // Start elapsed timer
+                        const timerEl = document.getElementById('batchLlmTimer');
+                        const t0 = Date.now();
+                        llmTimer = setInterval(() => {
+                            const s = Math.floor((Date.now() - t0) / 1000);
+                            if (timerEl) timerEl.textContent = `${s}s`;
+                        }, 1000);
+                    } else if (msg.type === 'llm_fallback') {
+                        const llmText = document.getElementById('batchLlmText');
+                        if (llmText) llmText.textContent = t('batch.llmFallback');
+                    } else if (msg.type === 'extraction') {
+                        if (llmTimer) clearInterval(llmTimer);
+                        _batchExtraction = msg;
+                        showBatchReview(msg, selected);
+                    } else if (msg.type === 'error') {
+                        if (llmTimer) clearInterval(llmTimer);
+                        const llmText = document.getElementById('batchLlmText');
+                        if (llmText) { llmText.textContent = 'Error: ' + msg.message; llmText.style.color = '#E74C3C'; }
+                        const llmFill = document.getElementById('batchLlmFill');
+                        if (llmFill) { llmFill.classList.remove('batch-progress-indeterminate'); llmFill.style.background = '#E74C3C'; llmFill.style.width = '100%'; }
+                    }
+                } catch {}
+            }
+        }
+    } catch (err) {
+        if (llmTimer) clearInterval(llmTimer);
+        const llmText = document.getElementById('batchLlmText') || document.querySelector('.batch-progress-text');
+        if (llmText) { llmText.textContent = 'Error: ' + err.message; llmText.style.color = '#E74C3C'; }
+    }
+}
+
+function showBatchReview(extraction, selectedItems) {
+    // Remove progress
+    const p = document.getElementById('batchProgress');
+    if (p) p.remove();
+
+    const evt = extraction.evento;
+    const actors = extraction.actors || [];
+    const overlapping = new Set(extraction.overlapping_actor_ids || []);
+    const novel = new Set(extraction.novel_actor_ids || []);
+    const confirmedActors = actors.filter(a => overlapping.has(a.id));
+    const novelActors = actors.filter(a => novel.has(a.id));
+    const quotes = evt.evidence_quotes || [];
+
+    const overlay = document.createElement('div');
+    overlay.className = 'batch-review-overlay';
+    overlay.id = 'batchReviewOverlay';
+    overlay.innerHTML = `<div class="batch-review-modal">
+        <h3>${t('batch.review.title')}</h3>
+        <div class="batch-review-event">
+            <div class="batch-review-event-name">${evt.name || ''}</div>
+            <div class="batch-review-event-meta">
+                ${tEventType(evt.event_type)} · ${evt.date || '?'} · ${evt.is_disputed ? '⚡ ' + t('detail.disputed') : ''}
+            </div>
+        </div>
+        ${quotes.length ? `<div class="batch-review-quotes">${quotes.map(q => `
+            <div class="batch-review-quote">
+                "${q.quote}"
+                <div class="batch-review-quote-source">${q.source_name}</div>
+            </div>`).join('')}</div>` : ''}
+        <div class="batch-review-section">
+            <h4>${t('batch.review.confirmed')} (${confirmedActors.length})</h4>
+            <div class="batch-actor-list">
+                ${confirmedActors.map(a => `<div class="batch-actor-item batch-actor-confirmed">
+                    <span class="batch-actor-name">${a.name}</span>
+                    <span class="batch-actor-type">${tType(a.type)}</span>
+                    <span class="batch-mention-badge">${a.mention_count || '?'} ${t('batch.mentions')}</span>
+                </div>`).join('')}
+            </div>
+        </div>
+        <div class="batch-review-section">
+            <h4>${t('batch.review.novel')} (${novelActors.length})</h4>
+            <div class="batch-actor-list">
+                ${novelActors.map(a => `<div class="batch-actor-item batch-actor-novel">
+                    <span class="batch-actor-name">${a.name}</span>
+                    <span class="batch-actor-type">${tType(a.type)}</span>
+                </div>`).join('')}
+            </div>
+        </div>
+        <div class="batch-review-actions">
+            <button class="action-btn" onclick="discardBatch()">${t('batch.review.discard')}</button>
+            <button class="action-btn primary" onclick="commitBatch()">${t('batch.review.commit')}</button>
+        </div>
+    </div>`;
+    document.body.appendChild(overlay);
+}
+
+function discardBatch() {
+    const overlay = document.getElementById('batchReviewOverlay');
+    if (overlay) overlay.remove();
+    _batchExtraction = null;
+}
+
+async function commitBatch() {
+    const overlay = document.getElementById('batchReviewOverlay');
+    if (!_batchExtraction) return;
+
+    // Disable buttons
+    const btns = overlay.querySelectorAll('.action-btn');
+    btns.forEach(b => { b.disabled = true; });
+
+    const selected = _batchItems.filter(item => _batchSelected.has(item.link));
+    if (overlay) overlay.remove();
+
+    // Reuse streamProcessNews which handles all the D3 live rendering
+    // We pass the batch params — streamProcessNews uses POST /api/news/process
+    // but for batch commit we need our own SSE endpoint. Use the same graph setup pattern.
+    const params = {
+        items: selected.map(s => ({ title: s.title, link: s.link, source: s.source, pubDate: s.pubDate, description: s.description || '' })),
+        focalNodeId: focalId || null,
+        commit: true,
+        extraction: _batchExtraction
+    };
+
+    // Trigger the SSE commit and navigate to the resulting event when done
+    try {
+        const response = await fetch(`${API}/api/news/process-batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params)
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let eventId = null;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const msg = JSON.parse(line.slice(6));
+                    if (msg.type === 'focal') {
+                        eventId = msg.node?.id;
+                    } else if (msg.type === 'done' && msg.status === 'committed') {
+                        // Navigate to the new event in the graph
+                        if (eventId) navigateTo(eventId, true);
+                    } else if (msg.type === 'error') {
+                        console.error('Batch commit error:', msg.message);
+                    }
+                } catch {}
+            }
+        }
+    } catch (err) {
+        console.error('Commit batch error:', err);
+    }
+    _batchExtraction = null;
+}
+
+// Keep single-item ingest for feed items
 async function ingestFromWeb(btn, title, link, source, pubDate) {
     btn.disabled = true;
     btn.innerHTML = '<span class="pulse-dot"></span>';
-    // Pass focalId so the backend guarantees a link back to the origin node
     streamProcessNews({ title, link, source, description: '', contextNodeId: focalId || null }, btn);
 }
 
@@ -3412,11 +3727,12 @@ let feedTotal = 0;
 function switchRightTab(tab) {
     currentRightTab = tab;
     document.querySelectorAll('.right-tab').forEach(b => b.classList.remove('active'));
-    const tabMap = { feed: 'tabFeed', node: 'tabNode', sources: 'tabSources' };
+    const tabMap = { feed: 'tabFeed', node: 'tabNode', sources: 'tabSources', landscape: 'tabLandscape' };
     document.getElementById(tabMap[tab]).classList.add('active');
     document.getElementById('rightNodePanel').hidden = tab !== 'node';
     document.getElementById('rightFeedPanel').hidden = tab !== 'feed';
     document.getElementById('rightSourcesPanel').hidden = tab !== 'sources';
+    document.getElementById('rightLandscapePanel').hidden = tab !== 'landscape';
 
     if (tab === 'feed' && document.getElementById('newsFeed').children.length === 0) {
         feedPage = 0;
@@ -3424,6 +3740,9 @@ function switchRightTab(tab) {
     }
     if (tab === 'sources') {
         loadSourcesPanel();
+    }
+    if (tab === 'landscape') {
+        loadSuggestions();
     }
 }
 
@@ -3795,7 +4114,7 @@ function renderSourcesPanel() {
                 <span class="feed-name">${feed.name}</span>
                 <span class="feed-region">${feed.lang} · ${feed.region || ''}</span>
             </div>
-            <button class="alias-remove" onclick="removeFeed(${i})" title="Eliminar">&times;</button>
+            <button class="alias-remove" onclick="removeFeed(${i})" title="${t('detail.delete')}">&times;</button>
         `;
         feedsList.appendChild(row);
     });
@@ -3873,6 +4192,148 @@ async function removeTopic(index) {
     });
     renderSourcesPanel();
 }
+
+// --- Landscape Suggestions ---
+
+async function loadSuggestions() {
+    const container = document.getElementById('suggestionsContainer');
+    container.innerHTML = '<span class="loading-inline">...</span>';
+    try {
+        const resp = await fetch('/api/landscape/suggestions');
+        const suggestions = await resp.json();
+        renderSuggestions(suggestions);
+
+        // Update badge
+        const badge = document.getElementById('landscapeBadge');
+        const acceptAllBtn = document.getElementById('acceptAllBtn');
+        if (suggestions.length > 0) {
+            badge.textContent = suggestions.length;
+            badge.hidden = false;
+            acceptAllBtn.hidden = false;
+        } else {
+            badge.hidden = true;
+            acceptAllBtn.hidden = true;
+        }
+    } catch (err) {
+        container.innerHTML = `<p class="empty-msg">${err.message}</p>`;
+    }
+}
+
+function renderSuggestions(suggestions) {
+    const container = document.getElementById('suggestionsContainer');
+    if (suggestions.length === 0) {
+        container.innerHTML = `<p class="empty-msg">${t('landscape.noSuggestions')}</p>`;
+        return;
+    }
+
+    container.innerHTML = suggestions.map(s => {
+        const typeLabel = t(`landscape.${s.type}`) || s.type;
+        const typeIcon = s.type === 'containment' ? 'git-merge' : s.type === 'merge' ? 'copy' : 'corner-up-right';
+        const confidencePct = Math.round((s.confidence || 0) * 100);
+        const sharedList = (s.shared_actors || []).join(', ');
+
+        return `
+        <div class="suggestion-card" id="suggestion-${s.id}">
+            <div class="suggestion-type">
+                <i data-feather="${typeIcon}"></i>
+                <span class="suggestion-type-label">${typeLabel}</span>
+                <span class="suggestion-confidence">${confidencePct}%</span>
+            </div>
+            <div class="suggestion-events">
+                <div class="suggestion-event-a" onclick="clickNode('${s.event_a_id}')">
+                    <strong>${s.event_a_name || s.event_a_id}</strong>
+                    ${s.event_a_sources > 1 ? `<span class="suggestion-sources">${s.event_a_sources} ${t('detail.sources').toLowerCase()}</span>` : ''}
+                </div>
+                <div class="suggestion-arrow">→</div>
+                <div class="suggestion-event-b" onclick="clickNode('${s.event_b_id}')">
+                    <strong>${s.event_b_name || s.event_b_id}</strong>
+                    ${s.event_b_sources > 1 ? `<span class="suggestion-sources">${s.event_b_sources} ${t('detail.sources').toLowerCase()}</span>` : ''}
+                </div>
+            </div>
+            ${s.reason ? `<p class="suggestion-reason">${s.reason}</p>` : ''}
+            ${sharedList ? `<p class="suggestion-shared"><i data-feather="users"></i> ${sharedList}</p>` : ''}
+            <div class="suggestion-actions">
+                <button class="action-btn primary" onclick="acceptSuggestion(${s.id})">
+                    <i data-feather="check"></i> ${t('landscape.accept')}
+                </button>
+                <button class="action-btn" onclick="rejectSuggestion(${s.id})">
+                    <i data-feather="x"></i> ${t('landscape.reject')}
+                </button>
+            </div>
+        </div>`;
+    }).join('');
+
+    if (typeof feather !== 'undefined') feather.replace();
+}
+
+async function acceptSuggestion(id) {
+    const card = document.getElementById(`suggestion-${id}`);
+    if (card) card.style.opacity = '0.5';
+    try {
+        await fetch(`/api/landscape/suggestions/${id}/accept`, { method: 'POST' });
+        if (card) card.remove();
+        loadSuggestions(); // Refresh count
+        // Refresh graph if we're viewing it
+        if (focalId) loadEgo(focalId);
+    } catch (err) {
+        if (card) card.style.opacity = '1';
+    }
+}
+
+async function rejectSuggestion(id) {
+    const card = document.getElementById(`suggestion-${id}`);
+    if (card) card.style.opacity = '0.5';
+    try {
+        await fetch(`/api/landscape/suggestions/${id}/reject`, { method: 'POST' });
+        if (card) card.remove();
+        loadSuggestions();
+    } catch (err) {
+        if (card) card.style.opacity = '1';
+    }
+}
+
+async function acceptAllSuggestions() {
+    const btn = document.getElementById('acceptAllBtn');
+    btn.disabled = true;
+    try {
+        await fetch('/api/landscape/suggestions/accept-all', { method: 'POST' });
+        loadSuggestions();
+        if (focalId) loadEgo(focalId);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function triggerSweep() {
+    const btn = document.getElementById('sweepBtn');
+    const label = document.getElementById('sweepLabel');
+    const origText = label.textContent;
+    btn.disabled = true;
+    label.textContent = t('landscape.sweeping');
+    try {
+        const resp = await fetch('/api/landscape/sweep', { method: 'POST' });
+        const result = await resp.json();
+        label.textContent = origText;
+        loadSuggestions();
+    } catch (err) {
+        label.textContent = origText;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// Load suggestion count on startup
+(async () => {
+    try {
+        const resp = await fetch('/api/landscape/suggestions');
+        const suggestions = await resp.json();
+        const badge = document.getElementById('landscapeBadge');
+        if (badge && suggestions.length > 0) {
+            badge.textContent = suggestions.length;
+            badge.hidden = false;
+        }
+    } catch {}
+})();
 
 // --- Boot ---
 

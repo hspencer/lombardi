@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { Pool } = require('pg');
+const { findDuplicateEvent } = require('./dedup');
 
 // --- Config ---
 
@@ -123,6 +124,23 @@ async function initDB() {
         `);
         await client.query(`ALTER TABLE news_raw ADD COLUMN IF NOT EXISTS content_hash TEXT`).catch(() => {});
         await client.query(`CREATE INDEX IF NOT EXISTS idx_news_content_hash ON news_raw(content_hash)`).catch(() => {});
+
+        // evento_sources: multi-source tracking (RESPALDA semantic)
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS evento_sources (
+                id SERIAL PRIMARY KEY,
+                evento_id TEXT NOT NULL,
+                news_raw_id INTEGER REFERENCES news_raw(id),
+                news_link TEXT NOT NULL,
+                source_name TEXT,
+                title TEXT,
+                linked_at TIMESTAMPTZ DEFAULT NOW(),
+                linked_by TEXT DEFAULT 'system:ingestion',
+                UNIQUE(evento_id, news_link)
+            )
+        `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_evento_sources_evento ON evento_sources(evento_id)`).catch(() => {});
+
         await client.query("LOAD 'age'");
         await client.query("SET search_path = ag_catalog, public");
         // Ensure graph exists
@@ -198,35 +216,67 @@ function resolve(extraction) {
 
 // --- Write to Graph ---
 
-async function writeToGraph(client, newsItem, extraction) {
+async function writeToGraph(client, newsItem, extraction, newsRawId) {
     const evt = extraction.event;
     if (!evt || !evt.id) return;
 
-    // 1. Create Evento node
     // Fallback: use pub_date from the news item if LLM didn't extract a date
     const eventDate = evt.date || newsItem.pub_date || '';
     // Normalize: extract YYYY-MM-DD from various date formats
     const dateMatch = eventDate.match(/(\d{4}-\d{2}-\d{2})/);
     const normalizedDate = dateMatch ? dateMatch[1] : eventDate.slice(0, 10);
 
+    // 0. Semantic dedup: check if a similar event already exists
+    let deduplicated = false;
+    try {
+        const dup = await findDuplicateEvent(client, {
+            id: evt.id,
+            name: evt.name,
+            event_type: evt.event_type,
+            date: normalizedDate
+        });
+        if (dup) {
+            console.log(`    -> Dedup: "${evt.name}" coincide con "${dup.name}" (score ${dup.score.toFixed(2)})`);
+            evt.id = dup.id; // Redirect to existing event
+            deduplicated = true;
+        }
+    } catch (err) {
+        console.error(`      [Dedup] ${err.message.slice(0, 80)}`);
+    }
+
+    // 1. Create/update Evento node (skip overwrite if deduplicated)
+    if (!deduplicated) {
+        try {
+            await client.query(`
+                SELECT * FROM cypher('lombardi', $$
+                    MERGE (e:Evento {id: '${esc(evt.id)}'})
+                    SET e.name = '${esc(evt.name)}',
+                        e.event_type = '${esc(evt.event_type)}',
+                        e.date = '${esc(normalizedDate)}',
+                        e.is_disputed = ${evt.is_disputed || false},
+                        e.evidence_quote = '${esc(evt.evidence_quote || '')}',
+                        e.source = '${esc(newsItem.source_name)}',
+                        e.source_url = '${esc(newsItem.link)}',
+                        e.extraction_confidence = ${parseFloat(evt.extraction_confidence) || 0}
+                    RETURN e
+                $$) as (e agtype)
+            `);
+        } catch (err) {
+            console.error(`      [Evento] ${err.message.slice(0, 80)}`);
+            return; // Si falla el evento, no tiene sentido seguir
+        }
+    }
+
+    // 1b. Track source in evento_sources (RESPALDA semantic)
     try {
         await client.query(`
-            SELECT * FROM cypher('lombardi', $$
-                MERGE (e:Evento {id: '${esc(evt.id)}'})
-                SET e.name = '${esc(evt.name)}',
-                    e.event_type = '${esc(evt.event_type)}',
-                    e.date = '${esc(normalizedDate)}',
-                    e.is_disputed = ${evt.is_disputed || false},
-                    e.evidence_quote = '${esc(evt.evidence_quote || '')}',
-                    e.source = '${esc(newsItem.source_name)}',
-                    e.source_url = '${esc(newsItem.link)}',
-                    e.extraction_confidence = ${parseFloat(evt.extraction_confidence) || 0}
-                RETURN e
-            $$) as (e agtype)
-        `);
+            INSERT INTO public.evento_sources (evento_id, news_raw_id, news_link, source_name, title, linked_by)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (evento_id, news_link) DO NOTHING
+        `, [evt.id, newsRawId || null, newsItem.link, newsItem.source_name, newsItem.title,
+            deduplicated ? 'system:dedup' : 'system:ingestion']);
     } catch (err) {
-        console.error(`      [Evento] ${err.message.slice(0, 80)}`);
-        return; // Si falla el evento, no tiene sentido seguir
+        console.error(`      [EventoSource] ${err.message.slice(0, 80)}`);
     }
 
     // 2. Create Actor nodes + PARTICIPA edges
@@ -307,17 +357,19 @@ async function processFile(filePath) {
             const contentHash = crypto.createHash('sha256')
                 .update(newsItem.description || newsItem.title || '')
                 .digest('hex');
-            await client.query(`
+            const insertResult = await client.query(`
                 INSERT INTO public.news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed, content_hash)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8)
                 ON CONFLICT (link) DO UPDATE SET processed = true, content_hash = EXCLUDED.content_hash
+                RETURNING id
             `, [newsItem.source_name, newsItem.source_lang, newsItem.source_region || '',
                 newsItem.title, newsItem.link, newsItem.description, newsItem.pub_date, contentHash]);
+            const newsRawId = insertResult.rows[0]?.id;
 
             // Write to graph
             await client.query("LOAD 'age'");
             await client.query("SET search_path = ag_catalog, public");
-            await writeToGraph(client, newsItem, extraction);
+            await writeToGraph(client, newsItem, extraction, newsRawId);
             console.log('    -> Guardado.');
 
             // Move to processed

@@ -3,6 +3,8 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { findDuplicateEvent } = require('./dedup');
+const landscape = require('./landscape');
 
 const PORT = 3000;
 const FRONTEND_DIR = path.join(__dirname, '../frontend');
@@ -324,6 +326,28 @@ async function handleAPI(req, res) {
         for (const e of allEdges) {
             const key = [e.source, e.target].sort().join('|') + '|' + e.type;
             if (!dedupEdges.has(key)) dedupEdges.set(key, e);
+        }
+
+        // Enrich Evento nodes with news_count from evento_sources
+        const eventoIds = [...nodesMap.values()]
+            .filter(n => n.label === 'Evento')
+            .map(n => n.id);
+        if (eventoIds.length > 0) {
+            try {
+                const ncResult = await pool.query(
+                    `SELECT evento_id, COUNT(*)::int as news_count
+                     FROM evento_sources WHERE evento_id = ANY($1)
+                     GROUP BY evento_id`,
+                    [eventoIds]
+                );
+                for (const row of ncResult.rows) {
+                    const node = nodesMap.get(row.evento_id);
+                    if (node) node.news_count = row.news_count;
+                }
+            } catch (err) {
+                // Non-fatal: table may not exist yet during migration
+                console.error('[ego] news_count enrichment:', err.message.slice(0, 60));
+            }
         }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -2080,6 +2104,331 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
         return;
     }
 
+    // === BATCH PROCESS (SSE) ===
+    if (url.pathname === '/api/news/process-batch' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { items, focalNodeId, commit, extraction: clientExtraction } = body;
+
+        if (!items || items.length < 1) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end('{"error":"At least 1 item required"}');
+            return;
+        }
+
+        // SSE setup
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+        function emit(type, data) {
+            res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+        }
+
+        if (!commit) {
+            // === REVIEW MODE: extract but don't write ===
+            try {
+                // 1. Fetch full-text for each article
+                emit('status', { message: `Descargando ${items.length} artículos...` });
+                const enrichedItems = [];
+                for (let i = 0; i < items.length; i++) {
+                    const item = items[i];
+                    let content = item.description || '';
+                    try {
+                        const articleResp = await fetch(item.link, {
+                            signal: AbortSignal.timeout(10000),
+                            headers: { 'User-Agent': 'Mozilla/5.0 Lombardi/1.0' }
+                        });
+                        const html = await articleResp.text();
+                        content = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                            .replace(/<[^>]+>/g, ' ')
+                            .replace(/\s+/g, ' ')
+                            .trim()
+                            .slice(0, 3000);
+                    } catch {}
+                    enrichedItems.push({
+                        ...item,
+                        content,
+                        source_name: item.source || item.source_name || 'Web'
+                    });
+                    emit('status', { message: `Descargado ${i + 1}/${items.length}...` });
+                }
+
+                // 2. Get graph context (neighbors of focal node)
+                let graphContext = { nodes: [] };
+                if (focalNodeId) {
+                    try {
+                        const neighbors = await ageQuery(`
+                            MATCH (n {id: '${esc(focalNodeId)}'})-[]->(m)
+                            RETURN m
+                        `);
+                        const focal = await ageQuery(`MATCH (n {id: '${esc(focalNodeId)}'}) RETURN n`);
+                        graphContext.nodes = [...focal, ...neighbors].map(n => {
+                            const p = n.properties || n;
+                            return { id: p.id, name: p.name || '', type: p.type || '' };
+                        });
+                    } catch {}
+                }
+
+                // 3. Extract batch
+                emit('llm_start', { model: 'claude-sonnet', items: enrichedItems.length });
+                const { extractBatchFast, extractBatch: extractBatchLocal } = require('./extractor.js');
+                let extractionData;
+                try {
+                    extractionData = await extractBatchFast(enrichedItems, graphContext);
+                } catch (fastErr) {
+                    emit('llm_fallback', { model: 'ollama' });
+                    extractionData = await extractBatchLocal(enrichedItems, graphContext);
+                }
+
+                if (!extractionData?.event) {
+                    emit('error', { message: 'No se pudo extraer evento del lote' });
+                    res.end();
+                    return;
+                }
+
+                // 4. Classify overlapping vs novel
+                const actors = extractionData.actors || [];
+                const overlappingActorIds = actors.filter(a => (a.mention_count || 1) >= 2).map(a => a.id);
+                const novelActorIds = actors.filter(a => (a.mention_count || 1) < 2).map(a => a.id);
+
+                const relations = extractionData.actor_relations || [];
+                const overlappingRelations = relations.filter(r => (r.evidence_count || 1) >= 2);
+                const novelRelations = relations.filter(r => (r.evidence_count || 1) < 2);
+
+                emit('extraction', {
+                    evento: extractionData.event,
+                    actors,
+                    relations,
+                    provenance: extractionData.provenance || [],
+                    overlapping_actor_ids: overlappingActorIds,
+                    novel_actor_ids: novelActorIds,
+                    overlapping_relations: overlappingRelations.length,
+                    novel_relations: novelRelations.length
+                });
+                emit('done', { status: 'reviewing' });
+            } catch (err) {
+                emit('error', { message: err.message });
+            }
+            res.end();
+            return;
+        }
+
+        // === COMMIT MODE: write extraction to graph ===
+        if (!clientExtraction?.evento) {
+            emit('error', { message: 'No extraction data provided' });
+            res.end();
+            return;
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query("LOAD 'age'");
+            await client.query("SET search_path = ag_catalog, public");
+
+            const evt = clientExtraction.evento;
+            const actors = clientExtraction.actors || [];
+            const relations = clientExtraction.relations || [];
+
+            // 0. Semantic dedup: check if a similar event already exists
+            let deduplicated = false;
+            try {
+                const dup = await findDuplicateEvent(client, {
+                    id: evt.id,
+                    name: evt.name,
+                    event_type: evt.event_type,
+                    date: evt.date || ''
+                });
+                if (dup) {
+                    emit('info', { message: `Dedup: "${evt.name}" → "${dup.name}" (${dup.score.toFixed(2)})` });
+                    evt.id = dup.id;
+                    deduplicated = true;
+                }
+            } catch (err) {
+                // Dedup failure is non-fatal — continue with normal creation
+            }
+
+            // 1. Create/merge Evento (skip overwrite if deduplicated)
+            const evidenceQuote = evt.evidence_quotes?.[0]?.quote || evt.evidence_quote || '';
+            const evidenceSource = evt.evidence_quotes?.[0]?.source_name || '';
+            const evidenceUrl = evt.evidence_quotes?.[0]?.source_url || '';
+            if (!deduplicated) {
+                await client.query(`
+                    SELECT * FROM cypher('lombardi', $$
+                        MERGE (e:Evento {id: '${esc(evt.id)}'})
+                        SET e.name = '${esc(evt.name)}', e.event_type = '${esc(evt.event_type)}',
+                            e.date = '${esc(evt.date || '')}', e.is_disputed = ${evt.is_disputed || false},
+                            e.evidence_quote = '${esc(evidenceQuote)}',
+                            e.source = '${esc(evidenceSource)}',
+                            e.source_url = '${esc(evidenceUrl)}',
+                            e.extraction_confidence = ${parseFloat(evt.extraction_confidence) || 0}
+                        RETURN e
+                    $$) as (e agtype)
+                `).catch(() => {});
+            }
+
+            emit('focal', { node: { ...evt, label: 'Evento', _degree: 0, deduplicated } });
+
+            // 2. Create/merge Actors + PARTICIPA edges
+            for (const a of actors) {
+                await client.query(`
+                    SELECT * FROM cypher('lombardi', $$
+                        MERGE (a:Actor {id: '${esc(a.id)}'})
+                        SET a.name = '${esc(a.name)}', a.type = '${esc(a.type)}',
+                            a.description = '${esc(a.description || '')}'
+                        RETURN a
+                    $$) as (a agtype)
+                `).catch(() => {});
+
+                await client.query(`
+                    SELECT * FROM cypher('lombardi', $$
+                        MATCH (a:Actor {id: '${esc(a.id)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                        MERGE (a)-[r:PARTICIPA]->(e)
+                        SET r.role = '${esc(a.role || '')}',
+                            r.impact_direction = '${esc(a.impact_direction || 'neutral')}'
+                        RETURN a, e
+                    $$) as (a agtype, e agtype)
+                `).catch(() => {});
+
+                emit('node', {
+                    node: { ...a, label: 'Actor', _degree: 1 },
+                    edge: { source: a.id, target: evt.id, type: 'PARTICIPA', role: a.role }
+                });
+            }
+
+            // 3. Create actor_relations
+            const VALID_RELS = { PERTENECE_A: true, UBICADO_EN: true };
+            for (const rel of relations) {
+                const relType = String(rel.relation || '').toUpperCase().replace(/[^A-Z_]/g, '');
+                if (!VALID_RELS[relType]) continue;
+                await client.query(`
+                    SELECT * FROM cypher('lombardi', $$
+                        MATCH (a {id: '${esc(rel.source)}'}), (b {id: '${esc(rel.target)}'})
+                        MERGE (a)-[r:${relType}]->(b)
+                        RETURN a, b
+                    $$) as (a agtype, b agtype)
+                `).catch(() => {});
+                emit('edge', { edge: { source: rel.source, target: rel.target, type: relType } });
+            }
+
+            // 4. Contextual linking to focal node
+            if (focalNodeId) {
+                const actorIds = actors.map(a => a.id);
+                if (!actorIds.includes(focalNodeId)) {
+                    const exists = await client.query(`
+                        SELECT * FROM cypher('lombardi', $$
+                            MATCH (n {id: '${esc(focalNodeId)}'}) RETURN n
+                        $$) as (n agtype)
+                    `).catch(() => ({ rows: [] }));
+                    if (exists.rows.length > 0) {
+                        await client.query(`
+                            SELECT * FROM cypher('lombardi', $$
+                                MATCH (a {id: '${esc(focalNodeId)}'}), (e:Evento {id: '${esc(evt.id)}'})
+                                MERGE (a)-[r:PARTICIPA]->(e)
+                                SET r.role = 'vinculado por búsqueda'
+                                RETURN a, e
+                            $$) as (a agtype, e agtype)
+                        `).catch(() => {});
+                        emit('edge', { edge: { source: focalNodeId, target: evt.id, type: 'PARTICIPA', role: 'vinculado por búsqueda' } });
+                    }
+                }
+            }
+
+            // 5. Save each article to news_raw + evento_sources (RESPALDA)
+            for (const item of items) {
+                const nrResult = await client.query(`
+                    INSERT INTO public.news_raw (source_name, source_lang, source_region, title, link, description, pub_date, processed)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, true)
+                    ON CONFLICT (link) DO UPDATE SET processed = true
+                    RETURNING id
+                `, [item.source || item.source_name || '', item.source_lang || 'multi', '',
+                    item.title || '', item.link || '', item.description || '', item.pubDate || null
+                ]).catch(() => ({ rows: [] }));
+
+                const nrId = nrResult.rows?.[0]?.id || null;
+                await client.query(`
+                    INSERT INTO public.evento_sources (evento_id, news_raw_id, news_link, source_name, title, linked_by)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (evento_id, news_link) DO NOTHING
+                `, [evt.id, nrId, item.link || '', item.source || item.source_name || '', item.title || '',
+                    deduplicated ? 'system:dedup' : 'system:batch'
+                ]).catch(() => {});
+            }
+
+            emit('done', { status: 'committed', actorCount: actors.length, eventId: evt.id });
+        } catch (err) {
+            emit('error', { message: err.message });
+        } finally {
+            client.release();
+        }
+        res.end();
+        return;
+    }
+
+    // === LANDSCAPE (event hierarchy suggestions) ===
+    if (url.pathname === '/api/landscape/suggestions' && req.method === 'GET') {
+        try {
+            const suggestions = await landscape.getPendingSuggestions();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(suggestions));
+        } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    if (url.pathname.match(/^\/api\/landscape\/suggestions\/\d+\/accept$/) && req.method === 'POST') {
+        const id = parseInt(url.pathname.split('/')[4]);
+        try {
+            const result = await landscape.acceptSuggestion(id, 'user:manual');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'accepted', suggestion: result }));
+        } catch (err) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    if (url.pathname.match(/^\/api\/landscape\/suggestions\/\d+\/reject$/) && req.method === 'POST') {
+        const id = parseInt(url.pathname.split('/')[4]);
+        try {
+            const result = await landscape.rejectSuggestion(id, 'user:manual');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'rejected', suggestion: result }));
+        } catch (err) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    if (url.pathname === '/api/landscape/suggestions/accept-all' && req.method === 'POST') {
+        try {
+            const results = await landscape.acceptAllSuggestions('user:accept_all');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ results }));
+        } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    if (url.pathname === '/api/landscape/sweep' && req.method === 'POST') {
+        try {
+            const result = await landscape.runSweep();
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+        } catch (err) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
     // === SOURCES (feeds) ===
     if (url.pathname === '/api/sources' && req.method === 'GET') {
         const data = JSON.parse(fs.readFileSync(FEEDS_PATH, 'utf-8'));
@@ -2206,6 +2555,90 @@ Return ONLY a valid JSON array. Max 10 entities. If none are warranted, return [
             res.end(JSON.stringify(results));
         } catch (err) {
             console.error('Google News RSS error:', err.message);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+        }
+        return;
+    }
+
+    // === DETECT ANCHORS (batch pre-processing) ===
+    if (url.pathname === '/api/news/detect-anchors' && req.method === 'POST') {
+        const body = JSON.parse(await readBody(req));
+        const { items, focalNodeId } = body;
+        if (!items || !items.length) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end('{"error":"items required"}');
+            return;
+        }
+        try {
+            // 1. Build lookup from graph nodes + aliases
+            const graphNodes = await ageQuery(`MATCH (n) WHERE n.name IS NOT NULL RETURN n`);
+            const aliasData = JSON.parse(fs.readFileSync(ALIASES_PATH, 'utf-8'));
+
+            const nameLookup = new Map(); // lowercase name/alias → {id, type}
+            for (const node of graphNodes) {
+                const props = node.properties || node;
+                const id = props.id;
+                const name = (props.name || '').toLowerCase();
+                const type = props.type || (node.label === 'Evento' ? 'Evento' : '');
+                if (name.length > 2) nameLookup.set(name, { id, type });
+            }
+            for (const [entId, entry] of Object.entries(aliasData.entities || {})) {
+                const allNames = [entry.canonical, ...(entry.aliases || [])].filter(Boolean);
+                for (const alias of allNames) {
+                    const lower = alias.toLowerCase();
+                    if (lower.length > 2) nameLookup.set(lower, { id: entId, type: entry.type || '' });
+                }
+            }
+
+            // 2. For each item, detect anchors
+            const anchorBoost = 0.3;
+            const locationBoost = 0.15;
+            const results = items.map(item => {
+                const text = ((item.title || '') + ' ' + (item.description || '')).toLowerCase();
+                const anchors = new Map(); // id → type
+                for (const [name, info] of nameLookup) {
+                    if (text.includes(name)) {
+                        anchors.set(info.id, info.type);
+                    }
+                }
+                const anchorNodes = [...anchors.keys()];
+                const locationCount = [...anchors.values()].filter(t => t === 'Location').length;
+                const relevance = Math.min(1, anchorNodes.length * anchorBoost + locationCount * locationBoost);
+                return {
+                    ...item,
+                    anchor_nodes: anchorNodes,
+                    anchor_count: anchorNodes.length,
+                    relevance_score: Math.round(relevance * 100) / 100
+                };
+            });
+
+            // 3. Sort by relevance
+            results.sort((a, b) => b.relevance_score - a.relevance_score);
+
+            // 4. Auto-suggest via greedy set-cover (maximize unique anchors)
+            const maxSelection = 12;
+            const covered = new Set();
+            const suggested = [];
+            // Copy and sort for greedy selection
+            const candidates = [...results].sort((a, b) => {
+                const aNew = a.anchor_nodes.filter(n => !covered.has(n)).length;
+                const bNew = b.anchor_nodes.filter(n => !covered.has(n)).length;
+                return bNew - aNew;
+            });
+            for (const item of candidates) {
+                if (suggested.length >= maxSelection) break;
+                const newAnchors = item.anchor_nodes.filter(n => !covered.has(n));
+                if (newAnchors.length > 0 || suggested.length < 2) {
+                    suggested.push(item.link);
+                    newAnchors.forEach(n => covered.add(n));
+                }
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ results, suggested }));
+        } catch (err) {
+            console.error('Detect anchors error:', err.message);
             res.writeHead(500, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: err.message }));
         }
@@ -2450,6 +2883,14 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, async () => {
     console.log(`OS API: http://localhost:${PORT}`);
+
+    // Initialize landscape tables
+    try {
+        await landscape.initLandscapeTables();
+        console.log('OS: Landscape tables ready.');
+    } catch (err) {
+        console.error('OS: Landscape tables init error:', err.message);
+    }
 
     // Backfill: assign dates to events that lack them, using news_raw pub_date
     try {

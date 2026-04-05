@@ -79,6 +79,10 @@
                 <button id="tabFeed" class="right-tab active" onclick="switchRightTab('feed')"></button>
                 <button id="tabNode" class="right-tab" onclick="switchRightTab('node')"></button>
                 <button id="tabSources" class="right-tab" onclick="switchRightTab('sources')"></button>
+                <button id="tabLandscape" class="right-tab" onclick="switchRightTab('landscape')">
+                    <span id="tabLandscapeLabel"></span>
+                    <span id="landscapeBadge" class="landscape-badge" hidden></span>
+                </button>
             </div>
             <div id="rightNodePanel" class="right-panel-content" hidden>
                 <div class="detail-empty">
@@ -97,6 +101,19 @@
                 </div>
                 <div id="newsFeed" class="news-feed"></div>
                 <button id="loadMoreBtn" class="load-more-btn" onclick="loadMoreFeed()" hidden></button>
+            </div>
+            <div id="rightLandscapePanel" class="right-panel-content" hidden>
+                <div class="landscape-panel">
+                    <div class="landscape-header">
+                        <button id="sweepBtn" class="action-btn" onclick="triggerSweep()">
+                            <i data-feather="compass"></i> <span id="sweepLabel"></span>
+                        </button>
+                        <button id="acceptAllBtn" class="action-btn" onclick="acceptAllSuggestions()" hidden>
+                            <i data-feather="check-circle"></i> <span id="acceptAllLabel"></span>
+                        </button>
+                    </div>
+                    <div id="suggestionsContainer" class="suggestions-container"></div>
+                </div>
             </div>
             <div id="rightSourcesPanel" class="right-panel-content" hidden>
                 <div class="sources-panel">

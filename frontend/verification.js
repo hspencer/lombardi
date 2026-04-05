@@ -95,20 +95,23 @@ function renderVerificationPanel(edge) {
     const statusLabel = getStatusLabel(verification_status);
     const statusColor = getStatusColor(verification_status);
 
+    // Nombres cortos para las versiones
+    const nameA = _sourceData?.nombre || _sourceData?.name || source;
+    const nameB = _targetData?.nombre || _targetData?.name || target;
+
     // Renderizar evento con información completa si está disponible
-    const renderEvent = (data, fallbackId) => {
+    const renderEvent = (data, fallbackId, label) => {
         if (!data) {
-            return `<strong>${fallbackId}</strong>`;
+            return `<div class="version-label">${label}</div><strong>${fallbackId}</strong>`;
         }
 
         const nombre = data.nombre || data.name || fallbackId;
-        const descripcion = data.descripcion || data.description || '';
         const fecha = data.fecha || data.date || '';
         const quote = data.evidence_quote || data.quote || '';
 
         return `
+            <div class="version-label">${label}</div>
             <div class="event-title">${nombre}</div>
-            ${descripcion ? `<div class="event-desc">${descripcion}</div>` : ''}
             ${fecha ? `<div class="event-date">${fecha}</div>` : ''}
             ${quote ? `<div class="event-quote">"${quote}"</div>` : ''}
         `;
@@ -121,13 +124,25 @@ function renderVerificationPanel(edge) {
                 <span class="verification-status" style="background: ${statusColor}">${statusLabel}</span>
             </div>
 
+            ${analysis ? `
+            <div class="verification-dispute-summary">
+                <div class="dispute-summary-label">${t('disputeSummaryLabel')}</div>
+                <p>${analysis}</p>
+            </div>
+            ` : `
+            <div class="verification-dispute-summary dispute-summary-missing">
+                <div class="dispute-summary-label">${t('disputeSummaryLabel')}</div>
+                <p>${t('disputeSummaryMissing')}</p>
+            </div>
+            `}
+
             <div class="verification-events">
-                <div class="verification-event">
-                    ${renderEvent(_sourceData, source)}
+                <div class="verification-event verification-event-a">
+                    ${renderEvent(_sourceData, source, t('versionA'))}
                 </div>
                 <div class="verification-vs">vs</div>
-                <div class="verification-event">
-                    ${renderEvent(_targetData, target)}
+                <div class="verification-event verification-event-b">
+                    ${renderEvent(_targetData, target, t('versionB'))}
                 </div>
             </div>
 
@@ -142,18 +157,7 @@ function renderVerificationPanel(edge) {
                         ${renderProgressBar(tension_score, '#E74C3C')} ${(tension_score * 100).toFixed(0)}%
                     </span>
                 </div>
-                <div class="metadata-row">
-                    <span class="metadata-label">${t('detectedBy')}:</span>
-                    <span class="metadata-value">${detected_by}</span>
-                </div>
             </div>
-
-            ${analysis ? `
-            <div class="verification-analysis">
-                <strong>${t('analysisLabel')}:</strong>
-                <p>${analysis}</p>
-            </div>
-            ` : ''}
 
             <div class="verification-consensus">
                 <div class="consensus-header">
@@ -161,26 +165,23 @@ function renderVerificationPanel(edge) {
                     <span>${totalVotes} ${t('votes')}</span>
                 </div>
                 <div class="consensus-bar">
-                    ${renderConsensusBar(vote_agree_count, vote_disagree_count, vote_uncertain_count)}
-                </div>
-                <div class="consensus-score">
-                    ${renderProgressBar(consensus_score, '#27AE60')} ${(consensus_score * 100).toFixed(0)}% ${t('agreeLabel')}
+                    ${renderConsensusBar(vote_agree_count, vote_disagree_count, vote_uncertain_count, nameA, nameB)}
                 </div>
             </div>
 
             <div class="verification-form">
-                <h4>${t('yourVerification')}</h4>
+                <h4>${t('yourPosition')}</h4>
                 <div class="verification-question">
-                    <p>${t('verificationQuestion')}</p>
+                    <p>${t('positionQuestion')}</p>
                     <div class="vote-buttons">
                         <button class="vote-btn vote-agree" data-vote="agree">
-                            ✓ ${t('voteAgree')}
+                            ${t('voteSideA')}
                         </button>
                         <button class="vote-btn vote-disagree" data-vote="disagree">
-                            ✗ ${t('voteDisagree')}
+                            ${t('voteSideB')}
                         </button>
                         <button class="vote-btn vote-uncertain" data-vote="uncertain">
-                            ? ${t('voteUncertain')}
+                            ${t('voteBothValid')}
                         </button>
                     </div>
                 </div>
@@ -191,8 +192,8 @@ function renderVerificationPanel(edge) {
                 </div>
 
                 <div class="verification-comment">
-                    <label for="verificationComment">${t('commentOptional')}:</label>
-                    <textarea id="verificationComment" rows="3" placeholder="${t('commentPlaceholder')}"></textarea>
+                    <label for="verificationComment">${t('evidenceLabel')}:</label>
+                    <textarea id="verificationComment" rows="3" placeholder="${t('evidencePlaceholder')}"></textarea>
                 </div>
 
                 <div class="verification-verifier">
@@ -224,28 +225,35 @@ function renderProgressBar(value, color) {
 /**
  * Renderizar barra de consenso con segmentos
  */
-function renderConsensusBar(agree, disagree, uncertain) {
-    const total = agree + disagree + uncertain;
+function renderConsensusBar(sideA, sideB, nuanced, nameA, nameB) {
+    const total = sideA + sideB + nuanced;
     if (total === 0) {
         return '<div class="consensus-empty">' + t('noVotesYet') + '</div>';
     }
 
-    const agreePct = (agree / total) * 100;
-    const disagreePct = (disagree / total) * 100;
-    const uncertainPct = (uncertain / total) * 100;
+    const aPct = (sideA / total) * 100;
+    const bPct = (sideB / total) * 100;
+    const nPct = (nuanced / total) * 100;
+
+    const labelA = nameA ? truncate(nameA, 25) : t('versionA');
+    const labelB = nameB ? truncate(nameB, 25) : t('versionB');
 
     return `
         <div class="consensus-segments">
-            <div class="segment segment-agree" style="width: ${agreePct}%" title="${agree} ${t('agree')}"></div>
-            <div class="segment segment-disagree" style="width: ${disagreePct}%" title="${disagree} ${t('disagree')}"></div>
-            <div class="segment segment-uncertain" style="width: ${uncertainPct}%" title="${uncertain} ${t('uncertain')}"></div>
+            <div class="segment segment-agree" style="width: ${aPct}%" title="${sideA} ${labelA}"></div>
+            <div class="segment segment-disagree" style="width: ${bPct}%" title="${sideB} ${labelB}"></div>
+            <div class="segment segment-uncertain" style="width: ${nPct}%" title="${nuanced} ${t('voteBothValid')}"></div>
         </div>
         <div class="consensus-legend">
-            <span><span class="legend-dot" style="background: #27AE60"></span> ${agree} ${t('agree')}</span>
-            <span><span class="legend-dot" style="background: #E74C3C"></span> ${disagree} ${t('disagree')}</span>
-            <span><span class="legend-dot" style="background: #95A5A6"></span> ${uncertain} ${t('uncertain')}</span>
+            <span><span class="legend-dot" style="background: var(--tension-consenso)"></span> ${sideA} ${labelA}</span>
+            <span><span class="legend-dot" style="background: var(--tension-conflicto)"></span> ${sideB} ${labelB}</span>
+            <span><span class="legend-dot" style="background: var(--ink-faint)"></span> ${nuanced} ${t('voteBothValid')}</span>
         </div>
     `;
+}
+
+function truncate(str, max) {
+    return str.length > max ? str.slice(0, max) + '...' : str;
 }
 
 /**
@@ -338,8 +346,11 @@ async function submitVerification() {
     submitBtn.disabled = true;
     submitBtn.textContent = t('submitting');
 
+    const sourceId = typeof currentEdge.source === 'object' ? currentEdge.source.id : currentEdge.source;
+    const targetId = typeof currentEdge.target === 'object' ? currentEdge.target.id : currentEdge.target;
+
     try {
-        const response = await fetch(`/api/disputes/${currentEdge.source}/${currentEdge.target}/verify`, {
+        const response = await fetch(`/api/disputes/${encodeURIComponent(sourceId)}/${encodeURIComponent(targetId)}/verify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ verifier, vote, confidence, comment })

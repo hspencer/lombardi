@@ -1,7 +1,7 @@
 # Modelo de Datos de Lombardi
 
 **Versión de la ontología:** 3.0.0
-**Última actualización:** 2026-03-30
+**Última actualización:** 2026-04-04
 
 ## Índice
 
@@ -229,6 +229,12 @@ graph LR
 | `contradiction_type` | `enum` | `fact`, `actor`, `attribute`, `narrative` | Tipo de contradicción |
 | `analysis` | `string` | texto | Explicación breve de la diferencia |
 | `detected_by` | `string` | modelo | Modelo LLM que detectó la contradicción |
+| `detected_at` | `datetime` | ISO 8601 | Timestamp de detección |
+| `verification_status` | `enum` | `pending`, `confirmed`, `disputed`, `resolved` | Estado de verificación colaborativa |
+| `consensus_score` | `float` | 0.0-1.0 | Consenso comunitario ponderado |
+| `vote_agree_count` | `int` | ≥ 0 | Usuarios que confirman la contradicción |
+| `vote_disagree_count` | `int` | ≥ 0 | Usuarios que la desafían |
+| `vote_uncertain_count` | `int` | ≥ 0 | Usuarios inciertos |
 
 **Tipos de contradicción**:
 - **fact**: Una fuente dice que X ocurrió, la otra dice que no
@@ -681,24 +687,24 @@ graph TB
 ```mermaid
 graph LR
     subgraph Actores
-        DT[Donald Trump<br/>type: Person]
-        US[Estados Unidos<br/>type: Location]
-        CH[China<br/>type: Location]
+        DT[Donald Trump<br/>Person]
+        US[Estados Unidos<br/>Location]
+        CH[China<br/>Location]
     end
 
     subgraph Eventos
-        E1[Sanción a China<br/>type: SANCION_ECONOMICA<br/>date: 2026-03-15<br/>source: Reuters]
-        E2[Sanción a China<br/>type: SANCION_ECONOMICA<br/>date: 2026-03-15<br/>source: RT]
-        E3[Respuesta diplomática<br/>type: RUPTURA_DIPLOMATICA<br/>date: 2026-03-16<br/>source: Xinhua]
+        E1[Sanción a China<br/>SANCION_ECONOMICA<br/>2026-03-15 · Reuters]
+        E2[Sanción a China<br/>SANCION_ECONOMICA<br/>2026-03-15 · RT]
+        E3[Respuesta diplomática<br/>RUPTURA_DIPLOMATICA<br/>2026-03-16 · Xinhua]
     end
 
-    DT -->|PARTICIPA<br/>role: "impone"<br/>impact: negative| E1
+    DT -->|PARTICIPA · impone · negative| E1
     DT -->|PERTENECE_A| US
-    US -->|PARTICIPA<br/>role: "emite"| E1
-    CH -->|PARTICIPA<br/>role: "recibe"<br/>impact: negative| E1
-    CH -->|PARTICIPA<br/>role: "responde"| E3
+    US -->|PARTICIPA · emite| E1
+    CH -->|PARTICIPA · recibe · negative| E1
+    CH -->|PARTICIPA · responde| E3
 
-    E1 -.->|CONTRADICE<br/>tension: 0.65<br/>type: attribute| E2
+    E1 -.->|CONTRADICE · tension 0.65 · attribute| E2
     E1 -->|CAUSA| E3
 
     style DT fill:#3498DB,color:#fff
@@ -714,21 +720,21 @@ graph LR
 ```mermaid
 classDiagram
     class Actor {
-        +String id PK
+        +String id
         +String name
         +ActorType type
         +String description
     }
 
     class Evento {
-        +String id PK
+        +String id
         +String name
         +EventType event_type
         +String date
         +Boolean is_disputed
         +String evidence_quote
         +String source
-        +String source_url FK
+        +String source_url
         +Float extraction_confidence
     }
 
@@ -745,6 +751,12 @@ classDiagram
         +ContradictionType contradiction_type
         +String analysis
         +String detected_by
+        +DateTime detected_at
+        +VerificationStatus verification_status
+        +Float consensus_score
+        +Int vote_agree_count
+        +Int vote_disagree_count
+        +Int vote_uncertain_count
     }
 
     class Complementa {
@@ -760,12 +772,12 @@ classDiagram
     }
 
     class NewsRaw {
-        +Int id PK
+        +Int id
         +String source_name
         +String source_lang
         +String source_region
         +String title
-        +String link UK
+        +String link
         +String description
         +String pub_date
         +Timestamp ingested_at
@@ -776,67 +788,89 @@ classDiagram
     class AliasEntry {
         +String canonical
         +ActorType type
-        +String[] aliases
+        +List~String~ aliases
     }
 
-    Actor "1" --> "*" Participa : source
-    Evento "1" --> "*" Participa : target
+    class ActorType {
+        <<enumeration>>
+        Person
+        Organization
+        Location
+        Object
+    }
 
-    Actor "1" --> "*" PerteneceA : source
-    Actor "1" --> "*" PerteneceA : target
+    class EventType {
+        <<enumeration>>
+        CAMBIO_LIDERAZGO
+        PROMULGACION_NORMA
+        PROTESTA_SOCIAL
+        RUPTURA_DIPLOMATICA
+        ACCION_ARMADA
+        AMENAZA_COERCION
+        INCAUTACION_DETENCION
+        ACUERDO_PAZ
+        ADQUISICION_FUSION
+        SANCION_ECONOMICA
+        LANZAMIENTO_PRODUCTO
+        QUIEBRA_INSOLVENCIA
+        DECLARACION_PUBLICA
+        DENUNCIA_ACUSACION
+        FILTRACION
+        DESMENTIDO
+        EVENTO_GENERICO
+    }
 
-    Actor "1" --> "*" UbicadoEn : source
-    Actor "1" --> "*" UbicadoEn : target
+    class ImpactDirection {
+        <<enumeration>>
+        positive
+        negative
+        neutral
+    }
 
-    Evento "1" --> "*" Causa : source
-    Evento "1" --> "*" Causa : target
+    class ContradictionType {
+        <<enumeration>>
+        fact
+        actor
+        attribute
+        narrative
+    }
 
-    Evento "1" --> "*" Contradice : source
-    Evento "1" --> "*" Contradice : target
+    class VerificationStatus {
+        <<enumeration>>
+        pending
+        confirmed
+        disputed
+        resolved
+    }
 
-    Evento "1" --> "*" Complementa : source
-    Evento "1" --> "*" Complementa : target
+    Actor "1" --> "*" Participa
+    Participa "*" --> "1" Evento
 
-    Evento "1" --> "*" Actualiza : source
-    Evento "1" --> "*" Actualiza : target
+    Actor "1" --> "*" PerteneceA : structural
+    PerteneceA "*" --> "1" Actor
 
-    Evento "1" --> "0..1" NewsRaw : source_url = link
+    Actor "1" --> "*" UbicadoEn : geographic
+    UbicadoEn "*" --> "1" Actor
 
-    <<enumeration>> ActorType
-    ActorType : Person
-    ActorType : Organization
-    ActorType : Location
-    ActorType : Object
+    Evento "1" --> "*" Causa
+    Causa "*" --> "1" Evento
 
-    <<enumeration>> EventType
-    EventType : CAMBIO_LIDERAZGO
-    EventType : PROMULGACION_NORMA
-    EventType : PROTESTA_SOCIAL
-    EventType : RUPTURA_DIPLOMATICA
-    EventType : ACCION_ARMADA
-    EventType : AMENAZA_COERCION
-    EventType : INCAUTACION_DETENCION
-    EventType : ACUERDO_PAZ
-    EventType : ADQUISICION_FUSION
-    EventType : SANCION_ECONOMICA
-    EventType : LANZAMIENTO_PRODUCTO
-    EventType : QUIEBRA_INSOLVENCIA
-    EventType : DECLARACION_PUBLICA
-    EventType : DENUNCIA_ACUSACION
-    EventType : FILTRACION
-    EventType : DESMENTIDO
-    EventType : EVENTO_GENERICO
+    Evento "1" --> "*" Contradice
+    Contradice "*" --> "1" Evento
 
-    <<enumeration>> ImpactDirection
-    ImpactDirection : positive
-    ImpactDirection : negative
-    ImpactDirection : neutral
+    Evento "1" --> "*" Complementa
+    Complementa "*" --> "1" Evento
 
-    <<enumeration>> ContradictionType
-    ContradictionType : fact
-    ContradictionType : actor
-    ContradictionType : attribute
-    ContradictionType : narrative
+    Evento "1" --> "*" Actualiza
+    Actualiza "*" --> "1" Evento
+
+    Evento "*" --> "0..1" NewsRaw : source_url
+
+    Actor ..> ActorType
+    Evento ..> EventType
+    Participa ..> ImpactDirection
+    Contradice ..> ContradictionType
+    Contradice ..> VerificationStatus
 ```
 
 ---
@@ -851,5 +885,5 @@ classDiagram
 
 ---
 
-**Última actualización**: 2026-03-30
-**Versión del documento**: 1.0.0
+**Última actualización**: 2026-04-04
+**Versión del documento**: 1.1.0
