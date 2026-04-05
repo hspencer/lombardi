@@ -151,37 +151,93 @@ async function initDB() {
     }
 }
 
-// --- Ollama ---
+// --- Ollama (with retry + health check) ---
+
+const MAX_RETRIES = 3;
+const RETRY_BASE_MS = 3000; // 3s, 6s, 12s exponential backoff
+
+async function checkOllama() {
+    try {
+        const resp = await fetch('http://localhost:11434/api/tags', {
+            signal: AbortSignal.timeout(5000)
+        });
+        if (!resp.ok) return false;
+        const data = await resp.json();
+        const hasModel = data.models?.some(m => m.name === EXTRACTOR_MODEL);
+        if (!hasModel) console.error(`    [Ollama] Modelo "${EXTRACTOR_MODEL}" no encontrado.`);
+        return hasModel;
+    } catch {
+        return false;
+    }
+}
+
+async function waitForOllama(maxWaitMs = 60000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+        if (await checkOllama()) return true;
+        console.log('    [Ollama] Esperando conexión...');
+        await new Promise(r => setTimeout(r, 3000));
+    }
+    return false;
+}
 
 async function extract(newsItem) {
     const content = newsItem.description || newsItem.summary || '';
     const input = `Title: ${newsItem.title}\nSource: ${newsItem.source_name} (${newsItem.source_lang})\nContent: ${content.slice(0, 4000)}`;
 
-    const response = await fetch(OLLAMA_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(180000),
-        body: JSON.stringify({
-            model: EXTRACTOR_MODEL,
-            prompt: PROMPT + input,
-            stream: false,
-            options: {
-                temperature: 0.1,
-                num_predict: 2048,
-                num_ctx: 4096
+    let lastError;
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+            if (attempt > 0) {
+                const delay = RETRY_BASE_MS * Math.pow(2, attempt - 1);
+                console.log(`    [Retry ${attempt}/${MAX_RETRIES}] esperando ${delay}ms...`);
+                await new Promise(r => setTimeout(r, delay));
             }
-        })
-    });
 
-    const data = await response.json();
-    if (data.error) throw new Error(`Ollama error: ${data.error}`);
-    if (!data.response) throw new Error(`Ollama: respuesta vacía (modelo: ${EXTRACTOR_MODEL})`);
-    let raw = data.response.trim();
-    // Strip qwen3 <think>...</think> blocks if present
-    raw = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('Ollama no devolvio JSON valido');
-    return JSON.parse(jsonMatch[0]);
+            const response = await fetch(OLLAMA_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                signal: AbortSignal.timeout(180000),
+                body: JSON.stringify({
+                    model: EXTRACTOR_MODEL,
+                    prompt: PROMPT + input,
+                    stream: false,
+                    options: {
+                        temperature: 0.1,
+                        num_predict: 2048,
+                        num_ctx: 4096
+                    }
+                })
+            });
+
+            const data = await response.json();
+            if (data.error) throw new Error(`Ollama error: ${data.error}`);
+            if (!data.response) throw new Error(`Ollama: respuesta vacía (modelo: ${EXTRACTOR_MODEL})`);
+            let raw = data.response.trim();
+            // Strip qwen3 <think>...</think> blocks if present
+            raw = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('Ollama no devolvio JSON valido');
+            return JSON.parse(jsonMatch[0]);
+        } catch (err) {
+            lastError = err;
+            console.error(`    [Ollama] Intento ${attempt + 1} falló: ${err.message.slice(0, 80)}`);
+        }
+    }
+    throw lastError;
+}
+
+// --- Processing queue (serialize Ollama calls) ---
+
+let processingQueue = Promise.resolve();
+let queueSize = 0;
+
+function enqueueFile(filePath) {
+    queueSize++;
+    processingQueue = processingQueue
+        .then(() => processFile(filePath))
+        .catch(err => console.error(`    [Queue] Error: ${err.message.slice(0, 80)}`))
+        .finally(() => queueSize--);
 }
 
 // --- Resolve aliases ---
@@ -403,26 +459,40 @@ async function processAll() {
 
 async function startWatcher() {
     console.log(`OS: Vigilando ${RAW_DIR}...\n`);
-    fs.watch(RAW_DIR, async (eventType, fileName) => {
+    fs.watch(RAW_DIR, (eventType, fileName) => {
         if (eventType === 'rename' && fileName?.endsWith('.json') && !fileName.endsWith('.extraction.json')) {
             const filePath = path.join(RAW_DIR, fileName);
-            if (fs.existsSync(filePath)) {
-                await new Promise(r => setTimeout(r, 500));
-                await processFile(filePath);
-            }
+            // Debounce: wait 500ms for file to be fully written
+            setTimeout(() => {
+                if (fs.existsSync(filePath)) {
+                    enqueueFile(filePath);
+                }
+            }, 500);
         }
     });
 }
 
 async function main() {
-    console.log('=== Lombardi — Ingesta v2 ===\n');
+    console.log('=== Lombardi — Ingesta v3 ===\n');
     await initDB();
+
+    // Health check: wait for Ollama before processing
+    const ollamaReady = await waitForOllama(30000);
+    if (!ollamaReady) {
+        console.error('OS: Ollama no disponible. Los archivos quedarán pendientes y se reintentarán al detectar actividad.');
+    } else {
+        console.log(`OS: Ollama OK (modelo: ${EXTRACTOR_MODEL})`);
+    }
+
     await processAll();
     await startWatcher();
-    console.log('\nOS: Daemon activo. Ctrl+C para detener.');
+    console.log(`\nOS: Daemon activo. Ctrl+C para detener.`);
 }
 
 // Allow single-file processing from API
 module.exports = { processFile, pool, initDB };
 
-main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+// Only run main if executed directly (not required by start.js)
+if (require.main === module) {
+    main().catch(err => { console.error('Fatal:', err); process.exit(1); });
+}

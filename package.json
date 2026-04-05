@@ -3,6 +3,7 @@
   "version": "0.5.0",
   "description": "Triangulacion ontológica de fuentes de noticias globales",
   "scripts": {
+    "start": "node backend/start.js",
     "fetch": "node backend/rss_fetcher.js",
     "ingest": "node backend/ingest.js",
     "resolve": "node backend/resolver.js",

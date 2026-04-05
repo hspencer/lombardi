@@ -190,29 +190,49 @@ async function fetchTopicSearch(topic) {
 
 // --- Main ---
 
-const feeds = JSON.parse(fs.readFileSync(FEEDS_PATH, 'utf-8'));
-const enabled = feeds.filter(f => f.enabled !== false);
-const topics = loadTopics();
+async function runFetchCycle() {
+    const feeds = JSON.parse(fs.readFileSync(FEEDS_PATH, 'utf-8'));
+    const enabled = feeds.filter(f => f.enabled !== false);
+    const topics = loadTopics();
 
-console.log(`OS: ${enabled.length}/${feeds.length} fuentes habilitadas.`);
-if (topics.length > 0) console.log(`OS: Filtrando por ${topics.length} temas: ${topics.join(', ')}`);
-console.log('');
+    console.log(`\nOS: [${new Date().toLocaleTimeString()}] Ciclo de descarga — ${enabled.length} fuentes, ${topics.length} temas`);
 
-(async () => {
     // Phase 1: RSS feeds (passive monitoring)
+    let feedErrors = 0;
     for (const source of enabled) {
-        await fetchFeed(source, topics);
+        try {
+            await fetchFeed(source, topics);
+        } catch (err) {
+            feedErrors++;
+            console.error(`  ✗ ${source.name}: ${err.message.slice(0, 80)}`);
+        }
     }
 
     // Phase 2: Topic search via Google News (active search)
     if (topics.length > 0) {
-        console.log(`\nOS: Búsqueda activa por ${topics.length} temas en Google News...`);
+        console.log(`OS: Búsqueda activa por ${topics.length} temas en Google News...`);
         for (const topic of topics) {
-            await fetchTopicSearch(topic);
+            try {
+                await fetchTopicSearch(topic);
+            } catch (err) {
+                feedErrors++;
+                console.error(`  ✗ Topic "${topic}": ${err.message.slice(0, 80)}`);
+            }
             // Rate limit: 2s between Google News queries
             await new Promise(r => setTimeout(r, 2000));
         }
     }
 
-    console.log('\nOS: Ciclo de descarga completado.');
-})();
+    console.log(`OS: Ciclo completado.${feedErrors > 0 ? ` (${feedErrors} errores)` : ''}`);
+    return { feedErrors };
+}
+
+module.exports = { runFetchCycle };
+
+// Only run directly if executed standalone
+if (require.main === module) {
+    runFetchCycle().catch(err => {
+        console.error('Fatal:', err);
+        process.exit(1);
+    });
+}
