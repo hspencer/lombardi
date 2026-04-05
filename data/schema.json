@@ -82,7 +82,13 @@
           "tension_score":      { "type": "number", "minimum": 0, "maximum": 1 },
           "contradiction_type": { "type": "string", "enum": ["fact", "actor", "attribute", "narrative"], "description": "Tipo de contradicción: hecho, actor, atributo o narrativa." },
           "analysis":           { "type": "string" },
-          "detected_by":        { "type": "string" }
+          "detected_by":        { "type": "string" },
+          "detected_at":        { "type": "string", "format": "date-time", "description": "Timestamp de detección ISO 8601." },
+          "verification_status": { "type": "string", "enum": ["pending", "confirmed", "disputed", "resolved"], "default": "pending", "description": "Estado de verificación colaborativa." },
+          "consensus_score":    { "type": "number", "minimum": 0, "maximum": 1, "default": 0, "description": "Consenso comunitario ponderado (0-1)." },
+          "vote_agree_count":   { "type": "integer", "default": 0, "description": "Usuarios que confirman la contradicción." },
+          "vote_disagree_count": { "type": "integer", "default": 0, "description": "Usuarios que la desafían." },
+          "vote_uncertain_count": { "type": "integer", "default": 0, "description": "Usuarios inciertos." }
         },
         "visual": { "color": "#E74C3C", "style": "solid", "width": 5, "force_distance": 300 }
       },
@@ -125,7 +131,26 @@
           "en": { "label": "Located in",    "description": "Geographic relationship." }
         },
         "visual": { "color": "#7F8C8D", "style": "dashed", "width": 1, "force_distance": 60 }
+      },
+      "CONTIENE": {
+        "from": "Evento",
+        "to": "Evento",
+        "description": "Jerarquía de eventos: un macro-evento contiene sub-eventos.",
+        "properties": {
+          "established_at": { "type": "string", "format": "date-time" },
+          "established_by": { "type": "string", "description": "system:dedup | user:manual | llm:containment | user:accept_suggestion" }
+        },
+        "i18n": {
+          "es": { "label": "Contiene",   "description": "Un evento amplio contiene sub-eventos más específicos." },
+          "en": { "label": "Contains",   "description": "A broad event contains more specific sub-events." }
+        },
+        "visual": { "color": "#8E44AD", "style": "solid", "width": 2, "force_distance": 80 }
       }
+    },
+    "RESPALDA": {
+      "note": "Implementado como tabla SQL evento_sources (no como arista de grafo). Una noticia respalda un evento.",
+      "sql_table": "evento_sources",
+      "columns": ["evento_id", "news_raw_id", "news_link", "source_name", "title", "linked_at", "linked_by"]
     }
   },
 

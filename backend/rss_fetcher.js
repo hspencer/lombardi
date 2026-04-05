@@ -29,7 +29,16 @@ function loadTopics() {
 function matchesTopics(topics, title, description) {
     if (topics.length === 0) return true;
     const text = `${title} ${description}`.toLowerCase();
-    return topics.some(topic => text.includes(topic.toLowerCase()));
+    return topics.some(topic => {
+        const t = topic.toLowerCase().trim();
+        // Short topics (≤3 chars like "IA", "AI", "War") need word boundaries
+        // Longer topics can use substring (e.g. "soberanía tecnológica")
+        if (t.length <= 3) {
+            const re = new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+            return re.test(text);
+        }
+        return text.includes(t);
+    });
 }
 
 function stripHtml(html) {
@@ -119,7 +128,68 @@ async function fetchFeed(source, topics) {
     }
 }
 
-// Leer feeds.json e iniciar descarga
+// --- Topic Search via Google News RSS ---
+
+async function fetchTopicSearch(topic) {
+    try {
+        const encoded = encodeURIComponent(topic.trim());
+        const url = `https://news.google.com/rss/search?q=${encoded}&hl=es&gl=CL&ceid=CL:es`;
+        console.log(`OS: Buscando "${topic}" en Google News...`);
+
+        const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        const xmlData = await response.text();
+        const jsonObj = parser.parse(xmlData);
+
+        const items = jsonObj.rss?.channel?.item || jsonObj.feed?.entry || [];
+        const itemList = Array.isArray(items) ? items : [items];
+        let saved = 0;
+
+        for (const item of itemList) {
+            // Google News links are redirects — extract real URL if available
+            let link = item.link?.href || item.link || item.id || '';
+            const title = item.title || '';
+            const description = item.description || item.summary || '';
+            const sourceName = item.source || `Google News (${topic})`;
+
+            const hash = fileHash(link || title || String(Date.now()));
+            const slug = slugify(`topic-${topic}`);
+            const fileName = `${slug}-${hash}.json`;
+            const filePath = path.join(RAW_DIR, fileName);
+
+            if (fs.existsSync(filePath)) continue;
+
+            // Fetch full article content
+            let fullText = null;
+            if (link) {
+                fullText = await fetchArticleContent(link);
+            }
+
+            const content = {
+                source_name: typeof sourceName === 'object' ? sourceName['#text'] || `Google News (${topic})` : sourceName,
+                source_lang: 'multi',
+                source_region: 'global',
+                title,
+                link,
+                description: fullText || description,
+                summary: description,
+                pub_date: item.pubDate || item.published || item.updated || '',
+                ingested_at: new Date().toISOString(),
+                fetch_type: 'topic_search',
+                topic: topic
+            };
+
+            fs.writeFileSync(filePath, JSON.stringify(content, null, 2));
+            saved++;
+        }
+
+        console.log(`  -> "${topic}": ${saved} nuevos, ${itemList.length} total`);
+    } catch (error) {
+        console.error(`  ✗ Topic "${topic}": ${error.message}`);
+    }
+}
+
+// --- Main ---
+
 const feeds = JSON.parse(fs.readFileSync(FEEDS_PATH, 'utf-8'));
 const enabled = feeds.filter(f => f.enabled !== false);
 const topics = loadTopics();
@@ -129,8 +199,20 @@ if (topics.length > 0) console.log(`OS: Filtrando por ${topics.length} temas: ${
 console.log('');
 
 (async () => {
+    // Phase 1: RSS feeds (passive monitoring)
     for (const source of enabled) {
         await fetchFeed(source, topics);
     }
+
+    // Phase 2: Topic search via Google News (active search)
+    if (topics.length > 0) {
+        console.log(`\nOS: Búsqueda activa por ${topics.length} temas en Google News...`);
+        for (const topic of topics) {
+            await fetchTopicSearch(topic);
+            // Rate limit: 2s between Google News queries
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+
     console.log('\nOS: Ciclo de descarga completado.');
 })();

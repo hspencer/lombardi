@@ -150,7 +150,12 @@ async function writeRelation(client, claimAId, claimBId, resolution) {
                     r.contradiction_type = '${esc(resolution.contradiction_type || '')}',
                     r.analysis = '${esc(resolution.analysis || '')}',
                     r.detected_by = '${esc(RESOLVER_MODEL)}',
-                    r.detected_at = '${new Date().toISOString()}'
+                    r.detected_at = '${new Date().toISOString()}',
+                    r.verification_status = 'pending',
+                    r.consensus_score = 0.0,
+                    r.vote_agree_count = 0,
+                    r.vote_disagree_count = 0,
+                    r.vote_uncertain_count = 0
                 RETURN c1, c2
             $$) as (c1 agtype, c2 agtype)
         `);

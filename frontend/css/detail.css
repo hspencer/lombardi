@@ -825,6 +825,394 @@
     color: var(--accent);
 }
 
+/* --- Batch News Selection Grid (Mondrian) --- */
+
+.batch-selection-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-sm) var(--space-md);
+    border-bottom: 1px solid var(--border-default);
+    background: var(--bg-surface);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.batch-selection-count {
+    font-size: var(--font-size-sm);
+    color: var(--ink-muted);
+    font-family: var(--font-mono);
+}
+
+.batch-extract-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 6px var(--space-md);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: none;
+    color: var(--accent);
+    font-size: var(--font-size-sm);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease-default);
+}
+.batch-extract-btn:hover {
+    background: var(--accent);
+    color: #fff;
+}
+.batch-extract-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* --- Batch Progress (two-phase) --- */
+.batch-selection-bar.batch-progress-active {
+    flex-direction: column;
+    gap: 4px;
+}
+.batch-progress-phase {
+    width: 100%;
+}
+.batch-progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+}
+.batch-progress-text {
+    font-family: var(--font-sans);
+    font-size: var(--font-size-sm);
+    color: var(--ink-secondary);
+}
+.batch-progress-count {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    color: var(--accent);
+}
+.batch-progress-bar {
+    width: 100%;
+    height: 3px;
+    background: var(--border-subtle);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 2px;
+}
+.batch-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.4s ease;
+}
+
+/* Phase done: shrink and mute */
+.batch-phase-done .batch-progress-text { color: var(--ink-faint); }
+.batch-phase-done .batch-progress-count { color: var(--ink-faint); }
+.batch-phase-done .batch-progress-fill { width: 100%; opacity: 0.4; }
+
+/* Phase waiting: muted until activated */
+.batch-phase-waiting .batch-progress-text { color: var(--ink-faint); }
+.batch-phase-waiting .batch-progress-count { color: var(--ink-faint); }
+.batch-phase-waiting .batch-progress-fill { width: 0%; }
+
+/* Indeterminate shimmer for LLM phase */
+.batch-progress-indeterminate {
+    width: 100% !important;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        var(--accent) 50%,
+        transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: batch-shimmer 1.8s ease-in-out infinite;
+    opacity: 0;
+}
+.batch-progress-phase:not(.batch-phase-waiting) .batch-progress-indeterminate {
+    opacity: 1;
+}
+@keyframes batch-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.batch-progress-active ~ .batch-news-grid .batch-news-card.selected {
+    animation: batch-pulse 2s ease-in-out infinite;
+}
+@keyframes batch-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+.batch-news-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+}
+
+.batch-news-card {
+    border: 1px solid var(--border-default);
+    border-radius: 6px;
+    padding: var(--space-sm) var(--space-md);
+    cursor: pointer;
+    transition: all var(--duration-fast) var(--ease-default);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.batch-news-card:hover {
+    border-color: var(--ink-faint);
+    background: var(--bg-surface-alt);
+}
+.batch-news-card.selected {
+    border-color: var(--accent);
+    background: rgba(184, 134, 11, 0.08);
+}
+.batch-news-card.suggested:not(.selected) {
+    border-color: var(--ink-faint);
+    border-style: dashed;
+}
+
+.batch-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.batch-card-source {
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: .2ex;
+}
+
+.batch-card-date {
+    font-size: var(--font-size-xs);
+    font-family: var(--font-serif);
+    color: var(--ink-faint);
+}
+
+.batch-card-title {
+    font-family: var(--font-serif);
+    font-size: var(--font-size-base);
+    font-weight: 400;
+    color: var(--ink-primary);
+    line-height: 1.3;
+}
+
+.batch-card-anchors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-top: 2px;
+}
+
+.anchor-badge {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--bg-surface-alt);
+    color: var(--ink-muted);
+    white-space: nowrap;
+}
+.anchor-badge.type-Location {
+    background: rgba(107, 140, 66, 0.15);
+    color: #8FA;
+}
+.anchor-badge.type-Person {
+    background: rgba(92, 58, 33, 0.15);
+    color: var(--node-actor);
+}
+.anchor-badge.type-Organization {
+    background: rgba(160, 139, 118, 0.15);
+    color: var(--node-afirmacion);
+}
+
+.batch-card-relevance {
+    height: 2px;
+    background: var(--border-default);
+    border-radius: 1px;
+    margin-top: auto;
+}
+.batch-card-relevance-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 1px;
+    transition: width var(--duration-normal) var(--ease-default);
+}
+
+.batch-checkbox {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--border-default);
+    border-radius: 3px;
+    background: none;
+    transition: all var(--duration-fast) var(--ease-default);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.batch-news-card.selected .batch-checkbox {
+    border-color: var(--accent);
+    background: var(--accent);
+}
+.batch-news-card.selected .batch-checkbox::after {
+    content: '✓';
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+}
+
+/* --- Batch Review Modal --- */
+
+.batch-review-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.batch-review-modal {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    padding: var(--space-lg);
+    width: 680px;
+    max-width: 92vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.batch-review-modal h3 {
+    font-family: var(--font-serif);
+    font-size: var(--font-size-lg);
+    font-weight: 400;
+    color: var(--ink-primary);
+    margin-bottom: var(--space-md);
+}
+
+.batch-review-event {
+    padding: var(--space-md);
+    background: var(--bg-surface-alt);
+    border-radius: 6px;
+    margin-bottom: var(--space-md);
+}
+
+.batch-review-event-name {
+    font-family: var(--font-serif);
+    font-size: var(--font-size-lg);
+    color: var(--node-evento);
+    margin-bottom: 4px;
+}
+
+.batch-review-event-meta {
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+    color: var(--ink-muted);
+}
+
+.batch-review-section {
+    margin-bottom: var(--space-md);
+}
+
+.batch-review-section h4 {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: .1ex;
+    margin-bottom: var(--space-sm);
+}
+
+.batch-actor-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.batch-actor-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 4px var(--space-sm);
+    border-radius: 4px;
+    font-size: var(--font-size-sm);
+}
+.batch-actor-confirmed {
+    border-left: 3px solid #2ECC71;
+    background: rgba(46, 204, 113, 0.05);
+}
+.batch-actor-novel {
+    border-left: 3px solid var(--border-default);
+    opacity: 0.75;
+}
+
+.batch-actor-name {
+    font-family: var(--font-sans);
+    color: var(--ink-primary);
+}
+
+.batch-actor-type {
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+    color: var(--ink-faint);
+}
+
+.batch-mention-badge {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--bg-surface-alt);
+    color: var(--ink-muted);
+    margin-left: auto;
+}
+
+.batch-review-quotes {
+    margin-top: var(--space-sm);
+}
+
+.batch-review-quote {
+    font-family: var(--font-serif);
+    font-size: var(--font-size-sm);
+    font-style: italic;
+    color: var(--ink-secondary);
+    padding: var(--space-sm);
+    border-left: 2px solid var(--border-default);
+    margin-bottom: var(--space-xs);
+}
+
+.batch-review-quote-source {
+    font-size: var(--font-size-xs);
+    font-family: var(--font-mono);
+    color: var(--ink-faint);
+    font-style: normal;
+}
+
+.batch-review-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+    margin-top: var(--space-lg);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--border-default);
+}
+
 /* --- Detail panel improvements --- */
 .detail-name {
     font-family: var(--font-serif);
@@ -1099,6 +1487,12 @@
     padding: 2px 8px;
     border-radius: 3px;
     font-weight: 600;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-default);
+}
+.disputed-badge:hover {
+    background: rgba(231, 76, 60, 0.25);
+    text-decoration: underline;
 }
 
 /* --- Add Relation Form --- */
@@ -1357,4 +1751,149 @@
 .add-feed-actions {
     display: flex;
     gap: var(--space-xs);
+}
+
+/* --- Landscape Suggestions --- */
+.landscape-panel {
+    padding: var(--space-sm);
+}
+
+.landscape-header {
+    display: flex;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-sm);
+    align-items: center;
+}
+
+.landscape-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--terracotta);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    padding: 0 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.suggestions-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.suggestion-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
+    transition: opacity 0.3s ease;
+}
+
+.suggestion-type {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xs);
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.suggestion-type svg {
+    width: 14px;
+    height: 14px;
+}
+
+.suggestion-type-label {
+    font-weight: 600;
+}
+
+.suggestion-confidence {
+    margin-left: auto;
+    color: var(--olive);
+    font-weight: 600;
+}
+
+.suggestion-events {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xs);
+}
+
+.suggestion-event-a,
+.suggestion-event-b {
+    flex: 1;
+    cursor: pointer;
+    padding: var(--space-xs);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-serif);
+    font-size: 0.85rem;
+    line-height: 1.3;
+}
+
+.suggestion-event-a:hover,
+.suggestion-event-b:hover {
+    background: var(--bg-hover);
+}
+
+.suggestion-sources {
+    display: block;
+    font-family: var(--font-sans);
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.suggestion-arrow {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+.suggestion-reason {
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-style: italic;
+    margin: var(--space-xs) 0;
+}
+
+.suggestion-shared {
+    font-family: var(--font-sans);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: var(--space-xs);
+}
+
+.suggestion-shared svg {
+    width: 12px;
+    height: 12px;
+}
+
+.suggestion-actions {
+    display: flex;
+    gap: var(--space-xs);
+    margin-top: var(--space-xs);
+}
+
+.suggestion-actions .action-btn {
+    font-size: 0.75rem;
+    padding: 4px 10px;
+}
+
+.suggestion-actions .action-btn svg {
+    width: 12px;
+    height: 12px;
 }

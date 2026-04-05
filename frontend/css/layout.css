@@ -34,40 +34,6 @@ body {
 
 .shell-header h1 strong { font-weight: 400; }
 
-/* Lombardispute animation */
-.dispute-suffix {
-    color: var(--node-evento, #C45D3E);
-    font-family: var(--font-sans);
-    font-weight: 400;
-    font-style: normal;
-    font-size: inherit;
-    letter-spacing: inherit;
-    display: none;
-}
-.dispute-suffix.active {
-    display: inline;
-    cursor: pointer;
-}
-.dispute-suffix.active:hover {
-    text-decoration: underline;
-}
-/* Dispute trigger plus */
-.dispute-plus {
-    color: var(--node-evento, #C45D3E);
-    font-family: inherit;
-    font-weight: inherit;
-    font-style: inherit;
-    font-size: inherit;
-    cursor: pointer;
-    transition: opacity 0.2s ease;
-}
-.dispute-plus:hover {
-    opacity: 0.7;
-}
-.dispute-plus.hidden {
-    display: none;
-}
-
 .header-controls {
     display: flex;
     align-items: center;
@@ -426,6 +392,36 @@ body {
     letter-spacing: .2ex;
 }
 
+/* --- Dispute toggle button (zap) --- */
+.dispute-toggle {
+    position: absolute;
+    top: var(--space-sm);
+    right: var(--space-sm);
+    z-index: 5;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 4px var(--space-md);
+    color: var(--ink-muted);
+    opacity: 0.5;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--duration-fast) var(--ease-default);
+}
+.dispute-toggle svg { width: 14px; height: 14px; }
+
+.dispute-toggle:hover {
+    opacity: 0.7;
+}
+
+.dispute-toggle.active {
+    opacity: 1;
+    color: var(--ink-primary);
+    border-bottom-color: var(--accent);
+}
+
 /* --- Degree 3-state switch --- */
 .degree-control {
     display: flex;
@@ -510,6 +506,18 @@ body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* --- Console drawer --- */
+/* --- Close button (shared) --- */
+.btn-close {
+    background: none;
+    border: none;
+    color: var(--ink-muted);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+.btn-close:hover { color: var(--ink-primary); }
+
 .console-drawer {
     position: fixed;
     bottom: 0;
@@ -517,7 +525,7 @@ body {
     right: 0;
     height: 280px;
     background: #0a0c10;
-    border-top: 1px solid var(--border-default);
+    border-top: 1px solid rgba(255,255,255,0.06);
     z-index: 200;
     display: flex;
     flex-direction: column;
@@ -535,9 +543,6 @@ body {
     flex-shrink: 0;
 }
 
-.console-header .detail-close {
-    position: static;
-}
 
 .console-header h4 {
     font-size: var(--font-size-sm);

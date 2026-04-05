@@ -2,21 +2,8 @@
   "$schema": "Diccionario de normalización de entidades para Lombardi",
   "version": "1.0.0",
   "description": "Mapea variantes de nombres a un ID canónico. Se consulta en cada ingesta para evitar nodos duplicados en el grafo. Editable manualmente o por el sistema.",
-  "updated_at": "2026-03-29",
+  "updated_at": "2026-04-04",
   "entities": {
-    "donald-trump": {
-      "canonical": "Donald Trump",
-      "type": "Person",
-      "aliases": [
-        "Trump",
-        "President Trump",
-        "Donald J. Trump",
-        "DJT",
-        "el presidente Trump",
-        "presidente estadounidense",
-        "the US president"
-      ]
-    },
     "volodymyr-zelensky": {
       "canonical": "Volodymyr Zelensky",
       "type": "Person",
@@ -84,7 +71,8 @@
         "Iran",
         "Islamic Republic of Iran",
         "Teherán",
-        "Tehran"
+        "Tehran",
+        "Persia"
       ]
     },
     "israel": {
@@ -342,14 +330,6 @@
       "type": "Organization",
       "aliases": []
     },
-    "pentagono": {
-      "canonical": "Pentágono",
-      "type": "Location",
-      "aliases": [
-        "pentagon",
-        "pentagonoo"
-      ]
-    },
     "hegseth": {
       "canonical": "Lloyd Austin (no aparece en el texto, pero es el Secretario de Defensa de EE.UU.)",
       "type": "Person",
@@ -466,13 +446,48 @@
       ]
     },
     "encarcelamiento-cientifico-artico-rusia": {
+      "canonical": "Encarcelamiento de científico por investigación en el Ártico",
+      "type": "Event",
       "aliases": [
         "russia-scientist-imprisonment"
       ]
     },
     "abusador-online-encontrado": {
+      "canonical": "Actriz denuncia abuso en línea por su esposo",
+      "type": "Event",
       "aliases": [
         "actriz-deepfakes-germania"
+      ]
+    },
+    "pentagon_whistleblower": {
+      "canonical": "Pentágono",
+      "type": "Organization",
+      "aliases": [
+        "pentagon",
+        "pentagonoo",
+        "pentagono"
+      ]
+    },
+    "nueva-zelanda": {
+      "canonical": "New Zealand",
+      "type": "Location",
+      "aliases": [
+        "Aotearoa",
+        "new-zealand"
+      ]
+    },
+    "pres-donald-trump": {
+      "canonical": "Donald Trump",
+      "type": "Person",
+      "aliases": [
+        "Trump",
+        "President Trump",
+        "Donald J. Trump",
+        "DJT",
+        "el presidente Trump",
+        "presidente estadounidense",
+        "the US president",
+        "donald-trump"
       ]
     }
   }

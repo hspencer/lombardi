@@ -294,5 +294,117 @@
     "lang": "es",
     "region": "Chile / global",
     "enabled": true
+  },
+  {
+    "id": "rnz-national",
+    "name": "RNZ - National",
+    "url": "https://www.rnz.co.nz/rss/national.xml",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "stuff-nz",
+    "name": "Stuff.co.nz",
+    "url": "https://www.stuff.co.nz/rss",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "the-spinoff",
+    "name": "The Spinoff",
+    "url": "https://thespinoff.co.nz/feed",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "tvnz-one-news",
+    "name": "One News (TVNZ)",
+    "url": "https://www.tvnz.co.nz/onenews/rss.xml",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "newshub-nz",
+    "name": "Newshub",
+    "url": "https://www.newshub.co.nz/home/rss.xml",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "nz-herald",
+    "name": "NZ Herald",
+    "url": "https://www.nzherald.co.nz/nz/rss.xml",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "otago-daily-times",
+    "name": "Otago Daily Times",
+    "url": "https://www.odt.co.nz/news/feed",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "newsroom-nz",
+    "name": "Newsroom.co.nz",
+    "url": "https://www.newsroom.co.nz/feed",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "newstalk-zb",
+    "name": "Newstalk ZB",
+    "url": "https://www.newstalkzb.co.nz/rss",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "the-platform-nz",
+    "name": "The Platform",
+    "url": "https://theplatform.kiwi/feed",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "kiwiblog",
+    "name": "Kiwiblog",
+    "url": "https://www.kiwiblog.co.nz/feed",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "the-daily-blog-nz",
+    "name": "The Daily Blog",
+    "url": "https://thedailyblog.co.nz/feed",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "interest-nz",
+    "name": "Interest.co.nz",
+    "url": "https://www.interest.co.nz/news/rss",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
+  },
+  {
+    "id": "scoop-nz",
+    "name": "Scoop.co.nz",
+    "url": "https://www.scoop.co.nz/rss",
+    "lang": "en",
+    "region": "NZ",
+    "enabled": true
   }
 ]

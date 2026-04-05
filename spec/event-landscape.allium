@@ -1,0 +1,973 @@
+-- allium: 3
+-- event-landscape.allium
+-- Especificacion del paisaje de eventos: jerarquia, cobertura multi-fuente,
+-- deduplicacion semantica y fetch dual (RSS + busqueda por temas)
+
+-- Ambito: Evolucion de la ontologia de eventos de Lombardi
+-- Incluye: Jerarquia de eventos (CONTIENE), cobertura multi-fuente,
+--          deduplicacion semantica en ingesta, fetch dual
+-- Excluye:
+--   - Modelo de controversias (ver controversy-model.allium)
+--   - Ingesta por lote (ver batch-ingestion.allium)
+--   - Visualizacion D3 (implementacion de frontend)
+--   - Persistencia AGE/Cypher (capa de almacenamiento)
+-- Dependencias: Evento, Actor definidos en controversy-model.allium
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Evento {
+    id: String
+    name: String
+    event_type: EventType
+    date: Date?
+    source: String
+    source_url: String
+    evidence_quote: String
+    extraction_confidence: Float
+    is_disputed: Boolean
+}
+
+external entity Actor {
+    id: String
+    name: String
+    type: ActorType
+}
+
+external entity NewsRaw {
+    id: Integer
+    title: String
+    link: String
+    source_name: String
+    source_lang: String
+    description: String
+    pub_date: Timestamp?
+    processed: Boolean
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+-- Una fuente que respalda un evento
+value EventSource {
+    news_raw_id: Integer           -- FK a news_raw
+    link: String
+    source_name: String
+    title: String
+    pub_date: Timestamp?
+    ingested_at: Timestamp
+}
+
+-- Resultado de comparacion de similitud entre dos eventos
+value SimilarityResult {
+    candidate_id: String           -- id del evento existente
+    name_similarity: Float         -- 0.0-1.0, similitud textual de nombres
+    date_proximity: Float          -- 0.0-1.0, cercanía temporal
+    type_match: Boolean            -- mismo event_type
+    shared_actors: Integer         -- actores en comun
+    overall_score: Float           -- 0.0-1.0, puntaje compuesto
+}
+
+-- Una fuente RSS configurada por el usuario
+value Feed {
+    id: String
+    name: String
+    url: String
+    lang: String
+    region: String
+    enabled: Boolean
+}
+
+-- Un tema de interes configurado por el usuario
+value Topic {
+    term: String                   -- texto del tema (ej: "Chile", "IA", "soberanía tecnológica")
+}
+
+-- Resultado de un ciclo de fetch
+value FetchResult {
+    source: String                 -- feed name o topic term
+    fetch_type: FetchType
+    items_found: Integer
+    items_new: Integer             -- no duplicados en news_raw
+    items_filtered: Integer        -- descartados por topic matching
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum FetchType {
+    rss_feed,                      -- monitoreo pasivo de un feed RSS
+    topic_search                   -- busqueda activa por tema de interes
+}
+
+enum ContainmentDepth {
+    root,                          -- evento sin padre
+    child                          -- evento contenido en otro
+}
+
+enum DeduplicationOutcome {
+    new_event,                     -- no se encontro duplicado, crear nuevo
+    merged,                        -- se fusiono con evento existente
+    discarded                      -- duplicado exacto, descartado
+}
+
+enum SuggestionType {
+    containment,                   -- A deberia contener a B
+    merge,                         -- A y B son el mismo evento, fusionar
+    reparent                       -- B deberia cambiar de padre A1 a A2
+}
+
+enum SuggestionStatus {
+    pending,                       -- esperando revision del usuario
+    accepted,                      -- usuario aprobo
+    rejected,                      -- usuario rechazo
+    expired                        -- descartada por cambios posteriores
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+-- Extension del Evento para soportar jerarquia y multi-fuente
+entity EventoExtended {
+    evento: Evento                 -- entidad base
+
+    -- Jerarquia
+    parent: EventoExtended?        -- evento contenedor (null = raiz)
+    children: Set<EventoExtended>  -- sub-eventos contenidos
+    depth: ContainmentDepth
+
+    -- Multi-fuente
+    sources: List<EventSource>     -- todas las fuentes que respaldan este evento
+    news_count: Integer            -- sources.count (metrica de atencion)
+    first_seen: Timestamp          -- pub_date mas antigua
+    last_seen: Timestamp           -- pub_date mas reciente
+
+    -- Derivados
+    attention_score: Float         -- 0.0-1.0, normalizado contra el maximo global
+    has_children: Boolean          -- children.count > 0
+    total_coverage: Integer        -- news_count + sum(children.news_count)
+}
+
+-- Ciclo de fetch: un ciclo completo de descarga de noticias
+entity FetchCycle {
+    id: String
+    started_at: Timestamp
+    completed_at: Timestamp?
+    fetch_type: FetchType
+    results: List<FetchResult>
+
+    -- Metricas agregadas
+    total_found: Integer
+    total_new: Integer
+    total_filtered: Integer
+}
+
+-- Sugerencia de reorganizacion del paisaje de eventos
+-- El sistema las genera periodicamente; el usuario las aprueba o rechaza.
+-- Analogo a solicitudes de amistad en RRSS.
+entity LandscapeSuggestion {
+    id: String
+    type: SuggestionType
+    status: SuggestionStatus
+
+    -- Los dos eventos involucrados
+    event_a: EventoExtended         -- el "mayor" o el que absorbe
+    event_b: EventoExtended         -- el "menor" o el absorbido
+
+    -- Explicacion generada por el LLM
+    reason: String                  -- "Comparten 4 actores y ocurren en la misma semana"
+    confidence: Float               -- 0.0-1.0, confianza del sistema
+
+    -- Evidencia que sustenta la sugerencia
+    shared_actor_names: List<String>
+    shared_source_count: Integer    -- fuentes en comun
+    name_similarity: Float
+    date_proximity: Float
+
+    -- Ciclo de vida
+    suggested_at: Timestamp
+    resolved_at: Timestamp?
+    resolved_by: String?            -- "user:accept" | "user:reject" | "system:expired"
+
+    transitions status {
+        pending -> accepted
+        pending -> rejected
+        pending -> expired
+        terminal: accepted, rejected, expired
+    }
+}
+
+------------------------------------------------------------
+-- Relationships
+------------------------------------------------------------
+
+-- CONTIENE: relacion jerarquica entre eventos
+relationship Contiene {
+    from: EventoExtended           -- evento padre (mas amplio)
+    to: EventoExtended             -- sub-evento (mas especifico)
+    established_at: Timestamp
+    established_by: String         -- "system:dedup" | "user:manual" | "llm:extraction"
+}
+
+-- RESPALDA: una noticia respalda un evento
+relationship Respalda {
+    from: NewsRaw
+    to: EventoExtended
+    linked_at: Timestamp
+    linked_by: String              -- "system:ingestion" | "system:dedup" | "user:manual"
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    -- Deduplicacion
+    dedup_name_threshold: Float = 0.75       -- similitud minima de nombre para candidato
+    dedup_overall_threshold: Float = 0.70    -- puntaje compuesto minimo para fusionar
+    dedup_date_window: Duration = 7.days     -- ventana temporal para buscar duplicados
+    dedup_max_candidates: Integer = 10       -- maximo de candidatos a evaluar
+
+    -- Jerarquia
+    max_containment_depth: Integer = 3       -- profundidad maxima de anidamiento
+    min_child_events: Integer = 2            -- minimo de sub-eventos para que un padre sea significativo
+
+    -- Barrido de paisaje
+    landscape_sweep_interval: Duration = 6.hours
+    min_shared_actors_for_cluster: Integer = 1  -- minimo de actores compartidos para agrupar
+    suggestion_cooldown: Duration = 30.days     -- no re-sugerir pares rechazados antes de esto
+    min_suggestion_confidence: Float = 0.5      -- umbral minimo para generar sugerencia
+
+    -- Fetch
+    rss_fetch_interval: Duration = 30.minutes
+    topic_search_interval: Duration = 2.hours
+    max_articles_per_feed: Integer = 50
+    max_articles_per_topic: Integer = 20
+    topic_word_boundary_length: Integer = 3  -- terminos <= N chars usan word boundary regex
+
+    -- Atencion visual
+    attention_base_size: Float = 8.0         -- radio base del nodo en D3
+    attention_scale_factor: Float = 0.6      -- factor de escala por raiz de news_count
+    attention_max_bonus: Float = 5.0         -- bonus maximo de tamaño
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- =============================================================================
+-- FETCH DUAL: RSS + BUSQUEDA POR TEMAS
+-- =============================================================================
+
+-- Regla 1: Fetch de feeds RSS (monitoreo pasivo)
+-- Los feeds RSS traen lo que publican los medios. El filtro por temas se aplica
+-- DESPUES de la descarga: si hay temas configurados, solo se guardan noticias
+-- que mencionen al menos un tema. Si no hay temas, se guarda todo.
+rule FetchRSSFeeds {
+    when: FetchCycleTriggered(type: rss_feed)
+
+    let feeds = Feed.all().filter(f => f.enabled)
+    let topics = Topic.all()
+
+    for feed in feeds:
+        let raw_items = download_rss(feed.url)
+
+        for item in raw_items:
+            -- Deduplicar por link (ya existe en news_raw?)
+            if exists(nr: NewsRaw where nr.link = item.link):
+                continue
+
+            -- Filtrar por temas si hay temas configurados
+            let passes_filter = topic_filter(
+                text: item.title + " " + item.description,
+                topics: topics,
+                considering: {
+                    word_boundary_for_short_terms: config.topic_word_boundary_length
+                }
+            )
+
+            if topics.count = 0 or passes_filter:
+                ensures: NewsRaw.created(
+                    title: item.title,
+                    link: item.link,
+                    source_name: feed.name,
+                    source_lang: feed.lang,
+                    description: item.description,
+                    pub_date: item.pub_date,
+                    processed: false
+                )
+
+    ensures: FetchCycle.created(
+        started_at: cycle_start,
+        completed_at: now,
+        fetch_type: rss_feed,
+        results: per_feed_results
+    )
+}
+
+-- Regla 2: Busqueda activa por temas de interes
+-- A diferencia del RSS que espera lo que publica cada medio,
+-- la busqueda por temas consulta activamente por cada tema configurado.
+-- Usa Google News RSS u otra fuente de busqueda.
+rule FetchTopicSearch {
+    when: FetchCycleTriggered(type: topic_search)
+
+    let topics = Topic.all()
+    requires: topics.count > 0  -- sin temas, no hay busqueda activa
+
+    for topic in topics:
+        let search_url = build_search_url(
+            term: topic.term,
+            considering: {
+                google_news_rss_format,
+                language_preference
+            }
+        )
+
+        let raw_items = download_rss(search_url)
+
+        for item in raw_items:
+            if exists(nr: NewsRaw where nr.link = item.link):
+                continue
+
+            ensures: NewsRaw.created(
+                title: item.title,
+                link: item.link,
+                source_name: item.source_name,
+                source_lang: infer_language(item),
+                description: item.description,
+                pub_date: item.pub_date,
+                processed: false
+            )
+
+    ensures: FetchCycle.created(
+        started_at: cycle_start,
+        completed_at: now,
+        fetch_type: topic_search,
+        results: per_topic_results
+    )
+}
+
+-- =============================================================================
+-- DEDUPLICACION SEMANTICA
+-- =============================================================================
+
+-- Regla 3: Al ingerir una noticia y extraer un evento, buscar duplicados
+-- antes de crear un evento nuevo. Si hay un evento similar, vincular la
+-- noticia como fuente adicional en lugar de crear un duplicado.
+rule DeduplicarEvento {
+    when: EventoExtractionProposed(
+        proposed_name: String,
+        proposed_type: EventType,
+        proposed_date: Date?,
+        source_news: NewsRaw
+    )
+
+    -- Buscar candidatos: eventos existentes del mismo tipo
+    -- dentro de la ventana temporal
+    let candidates = EventoExtended.all()
+        .filter(e =>
+            e.evento.event_type = proposed_type and
+            date_within_window(e.evento.date, proposed_date, config.dedup_date_window)
+        )
+        .take(config.dedup_max_candidates)
+
+    -- Calcular similitud con cada candidato
+    let matches = candidates.map(c => SimilarityResult(
+        candidate_id: c.evento.id,
+        name_similarity: compute_name_similarity(
+            considering: {
+                proposed_name,
+                c.evento.name,
+                -- Tolerar diferencias de idioma y estilo periodístico
+                normalize_accents: true,
+                cross_language: true
+            }
+        ),
+        date_proximity: compute_date_proximity(proposed_date, c.evento.date),
+        type_match: true,
+        shared_actors: count_shared_actors(proposed_extraction, c),
+        overall_score: weighted_composite(
+            considering: {
+                name_weight: 0.4,
+                date_weight: 0.2,
+                type_weight: 0.1,
+                actors_weight: 0.3
+            }
+        )
+    ))
+
+    let best_match = matches.max_by(m => m.overall_score)
+
+    ensures:
+        if best_match != null and best_match.overall_score >= config.dedup_overall_threshold:
+            -- Fusionar: vincular la noticia al evento existente
+            trigger VincularFuenteAEvento(
+                evento_id: best_match.candidate_id,
+                news: source_news,
+                linked_by: "system:dedup"
+            )
+            -- Resultado: merged
+        else:
+            -- Crear nuevo evento
+            trigger CrearEventoConFuente(
+                proposed_name: proposed_name,
+                proposed_type: proposed_type,
+                proposed_date: proposed_date,
+                news: source_news
+            )
+            -- Resultado: new_event
+}
+
+-- Regla 4: Vincular una fuente adicional a un evento existente
+rule VincularFuenteAEvento {
+    when: VincularFuenteAEvento(
+        evento_id: String,
+        news: NewsRaw,
+        linked_by: String
+    )
+
+    let evento = EventoExtended.find(evento_id)
+    requires: evento != null
+
+    -- Verificar que esta noticia no esta ya vinculada
+    requires: not exists(r: Respalda where r.from = news and r.to = evento)
+
+    ensures: Respalda.created(
+        from: news,
+        to: evento,
+        linked_at: now,
+        linked_by: linked_by
+    )
+
+    -- Actualizar metricas
+    ensures: evento.news_count = evento.sources.count + 1
+    ensures: evento.last_seen = max(evento.last_seen, news.pub_date)
+    ensures: evento.attention_score = compute_attention(evento.news_count)
+}
+
+-- Regla 5: Crear evento nuevo con su primera fuente
+rule CrearEventoConFuente {
+    when: CrearEventoConFuente(
+        proposed_name: String,
+        proposed_type: EventType,
+        proposed_date: Date?,
+        news: NewsRaw
+    )
+
+    ensures: EventoExtended.created(
+        evento: new_evento,
+        parent: null,
+        depth: root,
+        news_count: 1,
+        first_seen: news.pub_date,
+        last_seen: news.pub_date,
+        attention_score: compute_attention(1)
+    )
+
+    ensures: Respalda.created(
+        from: news,
+        to: new_evento_extended,
+        linked_at: now,
+        linked_by: "system:ingestion"
+    )
+}
+
+-- =============================================================================
+-- JERARQUIA DE EVENTOS (CONTIENE)
+-- =============================================================================
+
+-- Regla 6: Detectar relacion de contencion entre eventos
+-- Un evento "grande" (ej: "Conflicto EEUU-Iran") puede contener
+-- sub-eventos (ej: "Escalada de misiles en Ormuz").
+-- La deteccion puede ser automatica (LLM) o manual (usuario).
+rule DetectarContencion {
+    when: ContainmentDetected(
+        parent_id: String,
+        child_id: String,
+        detected_by: String
+    )
+
+    let parent = EventoExtended.find(parent_id)
+    let child = EventoExtended.find(child_id)
+
+    requires: parent != null
+    requires: child != null
+    requires: parent.evento.id != child.evento.id
+
+    -- No crear ciclos
+    requires: not is_ancestor(child, parent)
+
+    -- Respetar profundidad maxima
+    requires: depth_of(parent) + 1 <= config.max_containment_depth
+
+    -- Si el hijo ya tiene padre, reasignar (un evento solo tiene un padre)
+    ensures:
+        if child.parent != null:
+            -- Remover de padre anterior
+            child.parent.children.remove(child)
+
+    ensures: Contiene.created(
+        from: parent,
+        to: child,
+        established_at: now,
+        established_by: detected_by
+    )
+
+    ensures: child.parent = parent
+    ensures: child.depth = child
+    ensures: parent.children.add(child)
+
+    -- Propagar cobertura: el padre hereda la cobertura de sus hijos
+    ensures: parent.total_coverage = parent.news_count +
+        parent.children.map(c => c.total_coverage).sum()
+}
+
+-- Regla 7: Barrido periodico de reorganizacion del paisaje
+-- En lugar de evaluar contencion por cada evento nuevo (costoso, miope),
+-- un proceso periodico revisa TODOS los eventos y detecta:
+-- (a) huerfanos que deberian ser hijos de un evento existente
+-- (b) padres que deberian fusionarse entre si
+-- (c) hijos mal asignados que deberian cambiar de padre
+-- El resultado son sugerencias que el usuario revisa.
+rule BarridoLandscape {
+    when: LandscapeSweepTriggered()
+    -- Se ejecuta periodicamente (config.landscape_sweep_interval)
+    -- o manualmente cuando el usuario lo solicita
+
+    let all_events = EventoExtended.all()
+
+    -- Paso 1: Construir clusters por actores compartidos (barato, sin LLM)
+    let clusters = cluster_by_shared_actors(
+        events: all_events,
+        min_shared: config.min_shared_actors_for_cluster
+    )
+
+    -- Paso 2: Para cada cluster con 2+ eventos, pedir al LLM que clasifique
+    for cluster in clusters.filter(c => c.count >= 2):
+        let analysis = classify_cluster(
+            considering: {
+                cluster.events.map(e => {
+                    id: e.evento.id,
+                    name: e.evento.name,
+                    type: e.evento.event_type,
+                    date: e.evento.date,
+                    news_count: e.news_count,
+                    current_parent: e.parent?.evento.id
+                }),
+                cluster.shared_actors
+            }
+        )
+
+        -- El LLM devuelve pares con tipo de relacion sugerida
+        for suggestion in analysis.suggestions:
+            -- No sugerir lo que ya existe
+            if suggestion.type = containment
+                and suggestion.child.parent = suggestion.parent:
+                continue
+
+            -- No re-sugerir lo que el usuario ya rechazo recientemente
+            if exists(s: LandscapeSuggestion where
+                s.event_a = suggestion.event_a and
+                s.event_b = suggestion.event_b and
+                s.status = rejected and
+                s.resolved_at + config.suggestion_cooldown > now
+            ):
+                continue
+
+            ensures: LandscapeSuggestion.created(
+                type: suggestion.type,
+                status: pending,
+                event_a: suggestion.event_a,
+                event_b: suggestion.event_b,
+                reason: suggestion.reason,
+                confidence: suggestion.confidence,
+                shared_actor_names: suggestion.shared_actors,
+                shared_source_count: suggestion.shared_sources,
+                name_similarity: suggestion.name_similarity,
+                date_proximity: suggestion.date_proximity,
+                suggested_at: now
+            )
+}
+
+-- Regla 8: Usuario acepta una sugerencia
+rule AceptarSugerencia {
+    when: UserAcceptsSuggestion(suggestion: LandscapeSuggestion)
+
+    requires: suggestion.status = pending
+
+    ensures: suggestion.status = accepted
+    ensures: suggestion.resolved_at = now
+    ensures: suggestion.resolved_by = "user:accept"
+
+    -- Ejecutar la accion segun el tipo
+    ensures:
+        if suggestion.type = containment:
+            trigger DetectarContencion(
+                parent_id: suggestion.event_a.evento.id,
+                child_id: suggestion.event_b.evento.id,
+                detected_by: "user:accept_suggestion"
+            )
+        elif suggestion.type = merge:
+            trigger FusionarEventos(
+                absorber: suggestion.event_a,
+                absorbed: suggestion.event_b
+            )
+        elif suggestion.type = reparent:
+            trigger DetectarContencion(
+                parent_id: suggestion.event_a.evento.id,
+                child_id: suggestion.event_b.evento.id,
+                detected_by: "user:accept_suggestion"
+            )
+}
+
+-- Regla 9: Usuario rechaza una sugerencia
+rule RechazarSugerencia {
+    when: UserRejectsSuggestion(suggestion: LandscapeSuggestion)
+
+    requires: suggestion.status = pending
+
+    ensures: suggestion.status = rejected
+    ensures: suggestion.resolved_at = now
+    ensures: suggestion.resolved_by = "user:reject"
+    -- No se ejecuta ninguna accion. El cooldown impide re-sugerir
+    -- el mismo par durante config.suggestion_cooldown
+}
+
+-- Regla 10: Usuario acepta todas las sugerencias pendientes ("modo flojo")
+rule AceptarTodasLasSugerencias {
+    when: UserAcceptsAllSuggestions()
+
+    let pending = LandscapeSuggestion.all()
+        .filter(s => s.status = pending)
+        .sort_by(s => s.confidence, descending)
+
+    for suggestion in pending:
+        trigger AceptarSugerencia(suggestion: suggestion)
+}
+
+-- Regla 11: Fusionar dos eventos (uno absorbe al otro)
+-- El evento absorbido transfiere sus fuentes, hijos y relaciones al absorbente.
+-- Luego se elimina. Esto es irreversible.
+rule FusionarEventos {
+    when: FusionarEventos(
+        absorber: EventoExtended,
+        absorbed: EventoExtended
+    )
+
+    requires: absorber.evento.id != absorbed.evento.id
+
+    -- Transferir todas las fuentes del absorbido al absorbente
+    for source_link in Respalda.all().filter(r => r.to = absorbed):
+        ensures: Respalda.created(
+            from: source_link.from,
+            to: absorber,
+            linked_at: now,
+            linked_by: "system:merge"
+        )
+
+    -- Transferir hijos del absorbido al absorbente
+    for child in absorbed.children:
+        ensures: child.parent = absorber
+        ensures: absorber.children.add(child)
+
+    -- Si el absorbido tenia padre, desvincularlo
+    if absorbed.parent != null:
+        ensures: absorbed.parent.children.remove(absorbed)
+
+    -- Eliminar el evento absorbido
+    ensures: absorbed.deleted
+
+    -- Recalcular metricas del absorbente
+    ensures: absorber.news_count = Respalda.all().filter(r => r.to = absorber).count
+    ensures: absorber.total_coverage = absorber.news_count +
+        absorber.children.map(c => c.total_coverage).sum()
+
+    -- Invalidar sugerencias pendientes que involucraban al absorbido
+    for s in LandscapeSuggestion.all().filter(s =>
+        s.status = pending and
+        (s.event_a = absorbed or s.event_b = absorbed)
+    ):
+        ensures: s.status = expired
+        ensures: s.resolved_at = now
+        ensures: s.resolved_by = "system:expired"
+}
+
+-- Regla 12: Usuario establece contencion manualmente
+rule UsuarioEstableceContencion {
+    when: UserSetsContainment(
+        parent_id: String,
+        child_id: String
+    )
+
+    trigger DetectarContencion(
+        parent_id: parent_id,
+        child_id: child_id,
+        detected_by: "user:manual"
+    )
+}
+
+-- Regla 13: Usuario disuelve contencion
+rule UsuarioDisuelveContencion {
+    when: UserRemovesContainment(
+        parent_id: String,
+        child_id: String
+    )
+
+    let parent = EventoExtended.find(parent_id)
+    let child = EventoExtended.find(child_id)
+
+    requires: child.parent = parent
+
+    ensures: child.parent = null
+    ensures: child.depth = root
+    ensures: parent.children.remove(child)
+    ensures: Contiene.deleted(from: parent, to: child)
+
+    -- Recalcular cobertura del padre
+    ensures: parent.total_coverage = parent.news_count +
+        parent.children.map(c => c.total_coverage).sum()
+}
+
+-- =============================================================================
+-- ATENCION VISUAL (TAMAÑO DE NODO)
+-- =============================================================================
+
+-- Regla 14: Calcular tamaño visual de nodo basado en cobertura
+-- El tamaño del nodo en D3 es proporcional a la cantidad de fuentes
+-- que respaldan el evento (directas + hijos).
+rule CalcularAtencion {
+    when: evento: EventoExtended
+
+    let coverage = evento.total_coverage
+    let max_coverage = EventoExtended.all().max_by(e => e.total_coverage).total_coverage
+
+    ensures: evento.attention_score =
+        if max_coverage > 0:
+            coverage / max_coverage
+        else:
+            0.0
+
+    -- El radio visual resulta de:
+    --   base + min(sqrt(news_count) * scale_factor, max_bonus)
+    -- Esto se calcula en el frontend, pero la metrica attention_score
+    -- es el input normalizado que el frontend consume.
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant NoContencionCircular {
+    -- Un evento no puede ser ancestro de si mismo
+    for all e: EventoExtended:
+        not is_ancestor(e, e)
+}
+
+invariant ProfundidadMaxima {
+    for all e: EventoExtended:
+        depth_of(e) <= config.max_containment_depth
+}
+
+invariant FuenteUnicaPorEvento {
+    -- Una misma noticia no respalda dos veces el mismo evento
+    for all r1, r2: Respalda:
+        if r1.from = r2.from and r1.to = r2.to:
+            r1 = r2
+}
+
+invariant NewsCountConsistente {
+    -- news_count siempre refleja la cantidad real de fuentes vinculadas
+    for all e: EventoExtended:
+        e.news_count = Respalda.all().filter(r => r.to = e).count
+}
+
+invariant AttentionScoreValido {
+    for all e: EventoExtended:
+        e.attention_score >= 0.0 and e.attention_score <= 1.0
+}
+
+invariant HijoTieneUnSoloPadre {
+    -- Un evento solo puede estar contenido en un padre
+    for all e: EventoExtended:
+        Contiene.all().filter(c => c.to = e).count <= 1
+}
+
+invariant RaizSinPadre {
+    for all e: EventoExtended:
+        if e.depth = root:
+            e.parent = null
+}
+
+invariant SugerenciaNoAutoReferente {
+    for all s: LandscapeSuggestion:
+        s.event_a.evento.id != s.event_b.evento.id
+}
+
+invariant SugerenciaRechazadaRespetaCooldown {
+    -- No debe existir una sugerencia pending para un par que fue
+    -- rechazado hace menos de suggestion_cooldown
+    for all s1: LandscapeSuggestion where s1.status = pending:
+        not exists(s2: LandscapeSuggestion where
+            s2.status = rejected and
+            s2.event_a = s1.event_a and s2.event_b = s1.event_b and
+            s2.resolved_at + config.suggestion_cooldown > now
+        )
+}
+
+invariant FusionEliminaAbsorbido {
+    -- Tras una fusion, el evento absorbido no debe existir
+    -- (garantizado por FusionarEventos.ensures: absorbed.deleted)
+    for all s: LandscapeSuggestion where s.type = merge and s.status = accepted:
+        not exists(e: EventoExtended where e = s.event_b)
+}
+
+------------------------------------------------------------
+-- Auxiliary Functions (black boxes)
+------------------------------------------------------------
+
+-- Calcula similitud textual entre nombres de eventos
+-- Tolera diferencias de idioma, acentos, estilo periodistico
+function compute_name_similarity(a: String, b: String) -> Float {
+    considering: {
+        normalize_accents,
+        cross_language,       -- "Iran missile escalation" ~ "Escalada de misiles en Irán"
+        stopword_removal
+    }
+    returns: Float in 0.0..1.0
+}
+
+-- Calcula proximidad temporal (1.0 = mismo dia, 0.0 = fuera de ventana)
+function compute_date_proximity(a: Date?, b: Date?) -> Float {
+    if a = null or b = null: return 0.5  -- incertidumbre
+    returns: max(0.0, 1.0 - abs(a - b).days / config.dedup_date_window.days)
+}
+
+-- Determina si un evento es ancestro de otro (transitivo)
+function is_ancestor(potential_ancestor: EventoExtended, descendant: EventoExtended) -> Boolean {
+    -- Recorre parent hasta raiz o hasta encontrar match
+}
+
+-- Profundidad de un evento en la jerarquia (0 = raiz)
+function depth_of(evento: EventoExtended) -> Integer {
+    if evento.parent = null: return 0
+    return 1 + depth_of(evento.parent)
+}
+
+-- Calcula attention_score normalizado
+function compute_attention(news_count: Integer) -> Float {
+    -- Normalizado contra maximo global al momento de evaluacion
+}
+
+-- Filtra texto contra temas configurados
+-- Para terminos cortos (<= topic_word_boundary_length chars), usa word boundary regex
+-- Para terminos largos, usa substring match
+function topic_filter(text: String, topics: List<Topic>) -> Boolean {
+    if topics.count = 0: return true
+    return topics.any(t =>
+        if t.term.length <= config.topic_word_boundary_length:
+            word_boundary_match(text, t.term)
+        else:
+            text.lowercase.contains(t.term.lowercase)
+    )
+}
+
+-- Construye URL de busqueda Google News RSS para un tema
+function build_search_url(term: String) -> String {
+    -- https://news.google.com/rss/search?q={url_encode(term)}&hl={lang}&gl={country}&ceid={country}:{lang}
+    -- lang y country se derivan de las preferencias del usuario
+}
+
+-- Agrupa eventos por actores compartidos (grafo de co-ocurrencia)
+-- Barato: solo consulta relaciones PARTICIPA existentes, sin LLM.
+-- Dos eventos estan en el mismo cluster si comparten >= min_shared actores.
+function cluster_by_shared_actors(events: List<EventoExtended>, min_shared: Integer) -> List<Set<EventoExtended>> {
+    -- Connected components del grafo bipartito Evento-Actor
+    -- filtrado por umbral de actores compartidos
+}
+
+-- Un LLM analiza un cluster de eventos relacionados y sugiere reorganizaciones.
+-- Una sola llamada por cluster (no por par), lo que amortiza el costo.
+-- Devuelve lista de sugerencias tipadas (containment, merge, reparent).
+function classify_cluster(cluster: Set<EventoExtended>) -> List<LandscapeSuggestion> {
+    considering: {
+        event_names, event_types, event_dates,
+        shared_actors, current_hierarchy,
+        news_counts
+    }
+    returns: List of {type, event_a, event_b, reason, confidence}
+}
+
+------------------------------------------------------------
+-- Resolved Questions
+------------------------------------------------------------
+
+-- Q: Un evento puede tener multiples padres?
+-- A: No. Un evento tiene a lo sumo un padre. La relacion CONTIENE
+--    es un arbol, no un DAG. Si un evento es relevante para dos
+--    contextos, se vincula al mas especifico.
+
+-- Q: Como se manejan los duplicados exactos (mismo link)?
+-- A: Se descartan a nivel de NewsRaw (unicidad por link).
+--    La deduplicacion semantica opera a nivel de Evento,
+--    comparando nombre + fecha + tipo + actores compartidos.
+
+-- Q: Que pasa si un evento raiz deberia ser sub-evento?
+-- A: El usuario o el LLM pueden reasignar contencion en cualquier
+--    momento. El hijo se desvincula del padre anterior automaticamente.
+
+-- Q: Los feeds RSS y la busqueda por temas pueden traer la misma noticia?
+-- A: Si. La deduplicacion por link en news_raw evita duplicados.
+--    Una misma URL nunca se guarda dos veces.
+
+-- Q: Como se calcula el tamaño visual del nodo?
+-- A: base(8) + min(sqrt(total_coverage) * 0.6, max_bonus).
+--    total_coverage = fuentes directas + fuentes de sub-eventos.
+--    Esto permite que "Conflicto EEUU-Iran" sea visualmente grande
+--    incluso si tiene pocas fuentes directas, porque sus sub-eventos
+--    aportan cobertura.
+
+-- Q: Los temas de interes filtran solo el fetch por busqueda o tambien los RSS?
+-- A: Ambos. Los feeds RSS se descargan completos y luego se filtran
+--    por temas. La busqueda por temas ya es especifica por construccion.
+--    Si no hay temas configurados, los RSS se guardan sin filtrar.
+
+------------------------------------------------------------
+-- Resolved Questions (cont.)
+------------------------------------------------------------
+
+-- Q: Contencion en tiempo real (por evento) o periodica (batch)?
+-- A: Periodica. Un barrido cada 6 horas (configurable) revisa todos
+--    los eventos, los agrupa por actores compartidos (barato, sin LLM),
+--    y pide al LLM que clasifique cada cluster en una sola llamada.
+--    Ventajas: (1) amortiza costo LLM, (2) encuentra relaciones
+--    retroactivas que no se verian evento-por-evento, (3) detecta
+--    fusiones entre padres, no solo contencion de huerfanos.
+
+-- Q: Solo eventos huerfanos o todos?
+-- A: Todos. Dos padres pueden fusionarse ("Crisis Medio Oriente" y
+--    "Conflicto EEUU-Iran"), un hijo puede reasignarse a un padre
+--    mas especifico. El barrido no asume que la jerarquia actual
+--    es correcta.
+
+-- Q: Como interactua el usuario con las sugerencias?
+-- A: Cola de revision tipo "solicitudes de amistad". El usuario puede:
+--    (a) revisar y aceptar/rechazar individualmente,
+--    (b) aceptar todas las pendientes de una vez ("modo flojo").
+--    Las sugerencias rechazadas tienen cooldown (30 dias) para no
+--    re-aparecer inmediatamente.
+
+-- Q: Que pasa al fusionar dos eventos?
+-- A: El absorbente hereda fuentes, hijos y relaciones del absorbido.
+--    El absorbido se elimina. Las sugerencias pendientes que lo
+--    involucraban se marcan como expired. Es irreversible.
+
+-- Q: Que fuente de busqueda usar para topic_search?
+-- A: Google News RSS. Formato:
+--    https://news.google.com/rss/search?q={encoded_term}&hl={lang}
+--    Si Google impone rate limits, se puede alternar con otras fuentes
+--    en el futuro sin cambiar la especificacion.

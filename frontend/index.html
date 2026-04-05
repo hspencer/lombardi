@@ -12,11 +12,12 @@
     <link rel="stylesheet" href="css/layout.css">
     <link rel="stylesheet" href="css/graph.css">
     <link rel="stylesheet" href="css/detail.css">
+    <link rel="stylesheet" href="css/verification.css">
     <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
 </head>
 <body>
     <header class="shell-header">
-        <h1 style="cursor:pointer"><span onclick="navigateTo(null)">Lom<strong>bardi</strong></span><strong class="dispute-suffix" id="disputeSuffix">spute</strong><span class="dispute-plus" id="disputeDot" onclick="toggleDispute()" title="Lombardispute">+</span></h1>
+        <h1 style="cursor:pointer" onclick="navigateTo(null)">Lom<strong>bardi</strong></h1>
         <div class="search-container">
             <input type="text" id="searchInput" placeholder="Buscar actor, evento..." autocomplete="off">
             <ul id="searchResults" class="search-results" hidden></ul>
@@ -26,7 +27,7 @@
             <div id="processPanel" class="process-panel" hidden>
                 <div class="process-header">
                     <h4 id="processPanelTitle"></h4>
-                    <button onclick="toggleProcessPanel()" class="detail-close">&times;</button>
+                    <button onclick="toggleProcessPanel()" class="btn-close">&times;</button>
                 </div>
                 <div class="process-bar-container">
                     <div class="process-bar" id="processBar"></div>
@@ -66,6 +67,9 @@
                 </div>
             </div>
             <svg id="graph"></svg>
+            <button id="disputeToggle" class="dispute-toggle" onclick="toggleDispute()" title="Controversias">
+                <i data-feather="zap-off"></i>
+            </button>
             <div id="timelineBar" class="timeline-bar" hidden></div>
             <nav id="breadcrumbs" class="breadcrumbs"></nav>
         </div>
@@ -75,6 +79,10 @@
                 <button id="tabFeed" class="right-tab active" onclick="switchRightTab('feed')"></button>
                 <button id="tabNode" class="right-tab" onclick="switchRightTab('node')"></button>
                 <button id="tabSources" class="right-tab" onclick="switchRightTab('sources')"></button>
+                <button id="tabLandscape" class="right-tab" onclick="switchRightTab('landscape')">
+                    <span id="tabLandscapeLabel"></span>
+                    <span id="landscapeBadge" class="landscape-badge" hidden></span>
+                </button>
             </div>
             <div id="rightNodePanel" class="right-panel-content" hidden>
                 <div class="detail-empty">
@@ -93,6 +101,19 @@
                 </div>
                 <div id="newsFeed" class="news-feed"></div>
                 <button id="loadMoreBtn" class="load-more-btn" onclick="loadMoreFeed()" hidden></button>
+            </div>
+            <div id="rightLandscapePanel" class="right-panel-content" hidden>
+                <div class="landscape-panel">
+                    <div class="landscape-header">
+                        <button id="sweepBtn" class="action-btn" onclick="triggerSweep()">
+                            <i data-feather="compass"></i> <span id="sweepLabel"></span>
+                        </button>
+                        <button id="acceptAllBtn" class="action-btn" onclick="acceptAllSuggestions()" hidden>
+                            <i data-feather="check-circle"></i> <span id="acceptAllLabel"></span>
+                        </button>
+                    </div>
+                    <div id="suggestionsContainer" class="suggestions-container"></div>
+                </div>
             </div>
             <div id="rightSourcesPanel" class="right-panel-content" hidden>
                 <div class="sources-panel">
@@ -140,7 +161,7 @@
     <div id="consoleDrawer" class="console-drawer" hidden>
         <div class="console-header">
             <h4 id="consoleTitle"></h4>
-            <button onclick="toggleConsole()" class="detail-close">&times;</button>
+            <button onclick="toggleConsole()" class="btn-close">&times;</button>
         </div>
         <div id="consoleOutput" class="console-output"></div>
     </div>
@@ -149,6 +170,7 @@
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="i18n.js"></script>
     <script src="timeline.js"></script>
+    <script src="verification.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

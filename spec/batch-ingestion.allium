@@ -1,0 +1,441 @@
+-- allium: 3
+-- batch-ingestion.allium
+
+-- Scope: Ingesta por lote de noticias relacionadas para consolidación temática
+-- Incluye: NewsResult, NewsBatch, BatchExtraction, anclaje al grafo existente
+-- Excluye:
+--   - Extracción individual de noticias (ver ingest.js actual)
+--   - Visualización del grid Mondrian (implementación CSS)
+--   - Modelo de controversias (ver controversy-model.allium)
+-- Dependencias: Evento, Actor definidos en controversy-model.allium
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Evento {
+    id: String
+    name: String
+    event_type: String
+    date: String?
+    source: String
+    source_url: String
+    evidence_quote: String
+}
+
+external entity Actor {
+    id: String
+    name: String
+    type: String
+    description: String?
+}
+
+external entity Lugar {
+    id: String
+    name: String
+    lat: Decimal?
+    lon: Decimal?
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+-- Una noticia cruda tal como llega del feed RSS
+value NewsItem {
+    id: Integer
+    title: String
+    description: String
+    link: String
+    source_name: String
+    source_lang: String
+    pub_date: Timestamp?
+    content: String?
+}
+
+-- Un actor extraído con su frecuencia de aparición en el lote
+value ExtractedActor {
+    id: String
+    name: String
+    type: String
+    role: String?
+    mention_count: Integer         -- en cuántas noticias del lote aparece
+    is_new: Boolean                -- true si no existe en el grafo
+}
+
+-- Una relación extraída del lote
+value ExtractedRelation {
+    source_id: String
+    target_id: String
+    type: String                   -- PARTICIPA, UBICADO_EN, PERTENECE_A, etc.
+    role: String?
+    evidence_count: Integer        -- cuántas noticias respaldan esta relación
+}
+
+------------------------------------------------------------
+-- Enumerations
+------------------------------------------------------------
+
+enum BatchStatus {
+    selecting,                     -- usuario marcando noticias
+    ready,                         -- selección confirmada, listo para extraer
+    extracting,                    -- LLM procesando el lote
+    reviewing,                     -- usuario revisa resultado antes de confirmar
+    committed,                     -- destilación incorporada al grafo
+    failed                         -- extracción falló
+}
+
+enum AnchorStrength {
+    exact,                         -- nodo idéntico ya existe (mismo id)
+    alias,                         -- nombre coincide con alias conocido
+    semantic                       -- similitud semántica (fuzzy)
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+-- Resultado individual de búsqueda, presentado en el grid
+entity NewsResult {
+    news_item: NewsItem
+    focal_node_id: String          -- nodo desde el cual se buscó
+    selected: Boolean              -- marcado por el usuario
+    relevance_score: Decimal       -- 0.0-1.0, superposición con el grafo
+
+    -- Anclajes detectados: nodos del grafo que esta noticia menciona
+    anchor_nodes: Set<String>      -- ids de nodos existentes mencionados
+    anchor_count: Integer          -- anchor_nodes.count
+}
+
+-- Lote de noticias seleccionadas por el usuario para un tema
+entity NewsBatch {
+    id: String
+    focal_node_id: String          -- nodo desde el cual se originó la búsqueda
+    status: BatchStatus
+    selected_news: List<NewsResult>
+    created_at: Timestamp
+
+    -- Resultado de la extracción (presente tras extracting)
+    extraction: BatchExtraction? when status = reviewing | committed
+
+    -- Métricas
+    news_count: Integer            -- selected_news.count
+    total_anchor_count: Integer    -- unión de anchor_nodes de todas las noticias
+
+    transitions status {
+        selecting -> ready
+        ready -> extracting
+        extracting -> reviewing
+        extracting -> failed
+        reviewing -> committed
+        reviewing -> selecting       -- usuario descarta y reselecciona
+        failed -> selecting
+        terminal: committed
+    }
+}
+
+-- Resultado consolidado de la extracción por lote
+entity BatchExtraction {
+    batch: NewsBatch
+    evento: ExtractedEvento
+    actors: List<ExtractedActor>
+    relations: List<ExtractedRelation>
+    places: List<ExtractedActor>   -- Lugares, el anclaje más determinista
+
+    -- Lo superpuesto: señal fuerte, confirmada por múltiples fuentes
+    overlapping_actors: Set<String>    -- ids de actores mencionados en 2+ noticias
+    overlapping_places: Set<String>    -- ids de lugares mencionados en 2+ noticias
+
+    -- Lo no-superpuesto: innovación, aporte único de cada noticia
+    novel_actors: Set<String>          -- ids de actores mencionados en 1 sola noticia
+    novel_relations: Set<ExtractedRelation>
+
+    -- Trazabilidad: qué noticia aportó qué
+    provenance: List<ProvenanceEntry>
+}
+
+value ExtractedEvento {
+    id: String
+    name: String
+    event_type: String
+    date: String?
+    is_disputed: Boolean
+    evidence_quotes: List<EvidenceQuote>  -- una cita por noticia fuente
+}
+
+value EvidenceQuote {
+    quote: String
+    source_name: String
+    source_url: String
+}
+
+value ProvenanceEntry {
+    news_item_link: String
+    contributed_actors: Set<String>    -- qué actores vinieron de esta noticia
+    contributed_relations: Set<String> -- qué relaciones vinieron de esta noticia
+    is_sole_source_for: Set<String>   -- nodos que SOLO esta noticia aporta
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    min_selection: 1                   -- mínimo de noticias para un lote
+    max_selection: 12                  -- máximo de noticias para un lote
+    max_search_results: 30             -- noticias a mostrar en el grid
+    overlap_threshold: 2               -- mínimo de menciones para considerar "superpuesto"
+    anchor_boost: Decimal = 0.3        -- boost de relevancia por cada nodo anclado
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- Regla 1: Buscar noticias relacionadas y calcular anclajes
+rule BuscarNoticiasRelacionadas {
+    when: NewsSearchRequested(focal_node_id: String)
+
+    -- Buscar en news_raw por nombre, aliases y términos del nodo focal
+    let search_results = search_news_raw(
+        considering: {
+            focal_node.name,
+            focal_node.aliases,
+            focal_node.connected_actors,
+            focal_node.connected_places
+        }
+    )
+
+    -- Para cada resultado, detectar qué nodos del grafo menciona
+    for result in search_results:
+        let anchors = detect_anchor_nodes(
+            news_text: result.title + result.description,
+            considering: {
+                existing_actor_names,
+                existing_place_names,
+                known_aliases
+            }
+        )
+
+        ensures: NewsResult.created(
+            news_item: result,
+            focal_node_id: focal_node_id,
+            selected: false,
+            relevance_score: compute_relevance(anchors, focal_node_id),
+            anchor_nodes: anchors,
+            anchor_count: anchors.count
+        )
+
+    -- Ordenar por relevance_score descendente
+    -- Los resultados con más anclajes al grafo aparecen primero
+}
+
+-- Regla 1b: Sugerir selección óptima
+rule SugerirSeleccion {
+    when: search_results: List<NewsResult> available
+
+    -- Maximizar diversidad de anclajes: preferir noticias que cubran
+    -- nodos distintos del grafo, no las que repiten los mismos anclajes
+    let suggested = optimize_selection(
+        candidates: search_results,
+        strategy: maximize_anchor_diversity,
+        max: config.max_selection
+    )
+
+    for result in suggested:
+        ensures: result.selected = true
+
+    -- El usuario puede aceptar, modificar o descartar la sugerencia
+}
+
+-- Regla 2: Usuario selecciona noticias y crea un lote
+rule CrearLote {
+    when: UserSelectsNews(
+        focal_node_id: String,
+        selected_results: Set<NewsResult>
+    )
+
+    requires: selected_results.count >= config.min_selection
+    requires: selected_results.count <= config.max_selection
+
+    ensures: NewsBatch.created(
+        focal_node_id: focal_node_id,
+        status: ready,
+        selected_news: selected_results,
+        created_at: now,
+        news_count: selected_results.count,
+        total_anchor_count: union(selected_results.map(r => r.anchor_nodes)).count
+    )
+}
+
+-- Regla 3: Extraer lote — LLM lee todas las noticias juntas
+rule ExtraerLote {
+    when: batch: NewsBatch.status = ready
+
+    ensures: batch.status = extracting
+
+    -- El LLM recibe TODOS los títulos y contenidos completos (full-text) juntos
+    -- Produce un grafo unificado, no extracciones individuales
+    let extraction = extract_batch(
+        considering: {
+            batch.selected_news.map(n => {
+                title: n.news_item.title,
+                description: n.news_item.description,
+                content: n.news_item.content,       -- full-text
+                source_name: n.news_item.source_name,
+                link: n.news_item.link
+            }),
+            existing_graph_context(batch.focal_node_id)
+        }
+    )
+
+    -- Clasificar actores por superposición
+    let overlap = extraction.actors
+        .filter(a => a.mention_count >= config.overlap_threshold)
+    let novel = extraction.actors
+        .filter(a => a.mention_count < config.overlap_threshold)
+
+    ensures: batch.extraction = BatchExtraction.created(
+        batch: batch,
+        evento: extraction.evento,
+        actors: extraction.actors,
+        relations: extraction.relations,
+        places: extraction.places,
+        overlapping_actors: overlap.map(a => a.id),
+        overlapping_places: extraction.places
+            .filter(p => p.mention_count >= config.overlap_threshold)
+            .map(p => p.id),
+        novel_actors: novel.map(a => a.id),
+        novel_relations: extraction.relations
+            .filter(r => r.evidence_count < config.overlap_threshold),
+        provenance: compute_provenance(batch.selected_news, extraction)
+    )
+
+    ensures: batch.status = reviewing
+}
+
+-- Regla 4: Incorporar al grafo — el usuario confirma
+rule IncorporarAlGrafo {
+    when: UserConfirmsBatch(batch: NewsBatch)
+
+    requires: batch.status = reviewing
+
+    let ext = batch.extraction
+
+    -- 1. Crear o enriquecer el Evento
+    --    Si ya existe (por id), se enriquece con nuevas citas
+    --    Si no existe, se crea
+    ensures: Evento.merged(
+        id: ext.evento.id,
+        name: ext.evento.name,
+        event_type: ext.evento.event_type,
+        date: ext.evento.date,
+        is_disputed: ext.evento.is_disputed,
+        evidence_quote: ext.evento.evidence_quotes.first.quote,
+        source: ext.evento.evidence_quotes.first.source_name,
+        source_url: ext.evento.evidence_quotes.first.source_url
+    )
+
+    -- 2. Crear/merge actores
+    --    Los superpuestos (señal fuerte) se crean con alta confianza
+    --    Los nuevos (innovación) se crean con confianza proporcional
+    for actor in ext.actors:
+        ensures: Actor.merged(
+            id: actor.id,
+            name: actor.name,
+            type: actor.type
+        )
+
+    -- 3. Crear/merge relaciones
+    --    Si ya existe una relación idéntica (mismo source, target, type), no se duplica.
+    --    Las relaciones respaldadas por múltiples noticias son más confiables.
+    for relation in ext.relations:
+        ensures: Relation.merged(
+            source: relation.source_id,
+            target: relation.target_id,
+            type: relation.type,
+            role: relation.role
+        )
+
+    -- 4. Anclar al grafo existente
+    --    Los lugares son el anclaje más determinista
+    --    Luego actores y organizaciones conocidas
+    --    Las relaciones emergen de la topología, no se fuerzan
+
+    -- 5. Registrar fuentes: cada noticia del lote queda como fuente del evento
+    for news_result in batch.selected_news:
+        ensures: NewsSource.created(
+            evento_id: ext.evento.id,
+            link: news_result.news_item.link,
+            source_name: news_result.news_item.source_name,
+            title: news_result.news_item.title
+        )
+
+    ensures: batch.status = committed
+}
+
+-- Regla 5: Fallo en extracción
+rule ExtractionFailed {
+    when: batch: NewsBatch.status = extracting
+    requires: extraction_error_occurred(batch)
+
+    ensures: batch.status = failed
+}
+
+-- Regla 6: Descartar y reseleccionar
+rule DescartarResultado {
+    when: UserDiscardsBatch(batch: NewsBatch)
+
+    requires: batch.status = reviewing
+
+    ensures: batch.status = selecting
+    ensures: batch.extraction = null
+}
+
+------------------------------------------------------------
+-- Invariants
+------------------------------------------------------------
+
+invariant LoteMinimo {
+    for all b: NewsBatch:
+        b.selected_news.count >= config.min_selection
+}
+
+invariant LoteMaximo {
+    for all b: NewsBatch:
+        b.selected_news.count <= config.max_selection
+}
+
+invariant ProvenanciaCompleta {
+    -- Toda noticia del lote debe tener una entrada de proveniencia
+    for all b: NewsBatch where b.status = committed:
+        b.extraction.provenance.count = b.selected_news.count
+}
+
+invariant AnclajePorLugar {
+    -- Todo lote committed debe tener al menos un lugar anclado al grafo
+    for all b: NewsBatch where b.status = committed:
+        b.extraction.overlapping_places.count >= 1
+        or b.extraction.places.count = 0  -- salvo que no haya lugares
+}
+
+------------------------------------------------------------
+-- Resolved Questions
+------------------------------------------------------------
+
+-- Q: ¿El paso de reviewing muestra nodos superpuestos vs nuevos diferenciados?
+-- A: Se muestra el grafo consolidado. Las aristas pueden coincidir, sumarse
+--    o contradecirse. La interacción posterior (resolución) es otra funcionalidad.
+
+-- Q: ¿El sistema sugiere automáticamente qué noticias seleccionar?
+-- A: Sí. El sistema sugiere maximizando diversidad de anclajes.
+--    El usuario puede aceptar o modificar la selección.
+
+-- Q: ¿Qué pasa cuando dos lotes producen el mismo evento?
+-- A: Lo idéntico se fusiona sin crear nueva relación. Si las relaciones
+--    también son idénticas, no se construye otra arista. En el panel lateral,
+--    cada nodo tiene un selector de relación editable por el usuario.
+--    Si ya existe una relación igual, se fusiona.
+
+-- Q: ¿Full-text o solo título + descripción?
+-- A: Contenido completo (full-text).

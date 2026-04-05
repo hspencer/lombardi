@@ -1,0 +1,560 @@
+-- allium: 3
+-- controversy-model.allium
+-- Especificación del modelo de controversias colaborativo de Lombardi
+
+-- Ámbito: Sistema de detección, verificación y resolución colaborativa de contradicciones
+-- Incluye: Evento, Contradicción, Usuario, Verificación, Evidencia, Consenso
+-- Excluye:
+--   - Extracción ontológica (ver extractor.allium)
+--   - Visualización D3 (implementación de frontend)
+--   - Apache AGE/Cypher (capa de persistencia)
+
+-- =============================================================================
+-- ENTIDADES CORE
+-- =============================================================================
+
+entity Evento {
+    id: String              -- kebab-case único
+    name: String
+    event_type: EventType
+    date: Date?
+    source: String          -- nombre de la fuente
+    source_url: String      -- URL de la noticia
+    evidence_quote: String  -- cita textual en idioma original
+    extraction_confidence: Float  -- 0.0-1.0, confianza del LLM extractor
+
+    -- Estado de disputa (derivado, no almacenado)
+    is_disputed: Bool       -- true si tiene aristas CONTRADICE activas
+    dispute_count: Int      -- número de contradicciones vinculadas
+    consensus_status: ConsensusStatus
+}
+
+entity Actor {
+    id: String
+    name: String
+    type: ActorType
+    description: String
+}
+
+-- Nueva entidad para rastrear usuarios verificadores
+entity Usuario {
+    id: String              -- identificador único
+    name: String
+    email: String
+    reputation: Float       -- 0.0-1.0, basado en verificaciones históricas
+    expertise_areas: Set<EventType>  -- temas donde el usuario es experto
+    verified_count: Int     -- contador de verificaciones realizadas
+    joined_at: Timestamp
+}
+
+-- Nueva entidad para evidencias estructuradas
+entity Evidencia {
+    id: String
+    quote: String           -- cita textual
+    source_url: String      -- URL completa (puede incluir fragmento #)
+    timestamp: Timestamp    -- cuándo se agregó
+    relevance_score: Float  -- 0.0-1.0
+    found_by: Usuario
+}
+
+-- =============================================================================
+-- RELACIONES CORE
+-- =============================================================================
+
+relationship Participa {
+    from: Actor
+    to: Evento
+    role: String            -- verbo que describe la participación
+    impact_direction: ImpactDirection
+}
+
+-- Contradicción: corazón del modelo de controversias
+relationship Contradice {
+    from: Evento
+    to: Evento
+
+    -- Metadatos de detección (actual - automatizado)
+    tension_score: Float            -- 0.0-1.0, severidad de la contradicción
+    contradiction_type: ContradictionType
+    analysis: String                -- explicación de la diferencia
+    detected_by: String             -- modelo LLM o "user:id"
+    detected_at: Timestamp
+
+    -- Metadatos de verificación colaborativa (nuevo)
+    verification_status: VerificationStatus
+    verified_by: Set<Usuario>       -- usuarios que corroboraron
+    challenged_by: Set<Usuario>     -- usuarios que desafiaron
+
+    -- Agregación de votos
+    consensus_score: Float          -- 0.0-1.0, consenso ponderado
+    vote_agree_count: Int
+    vote_disagree_count: Int
+    vote_uncertain_count: Int
+}
+
+relationship Complementa {
+    from: Evento
+    to: Evento
+    detected_by: String
+    detected_at: Timestamp
+}
+
+relationship Respalda {
+    from: Evidencia
+    to: Evento
+    supports_or_contradicts: EvidencePosition
+    confidence: Float       -- 0.0-1.0, cuán fuerte es el respaldo
+}
+
+-- =============================================================================
+-- ENUMS
+-- =============================================================================
+
+enum EventType {
+    CAMBIO_LIDERAZGO,
+    PROMULGACION_NORMA,
+    PROTESTA_SOCIAL,
+    RUPTURA_DIPLOMATICA,
+    ACCION_ARMADA,
+    AMENAZA_COERCION,
+    INCAUTACION_DETENCION,
+    ACUERDO_PAZ,
+    ADQUISICION_FUSION,
+    SANCION_ECONOMICA,
+    LANZAMIENTO_PRODUCTO,
+    QUIEBRA_INSOLVENCIA,
+    DECLARACION_PUBLICA,
+    DENUNCIA_ACUSACION,
+    FILTRACION,
+    DESMENTIDO,
+    EVENTO_GENERICO
+}
+
+enum ActorType {
+    Person,
+    Organization,
+    Location,
+    Object
+}
+
+enum ImpactDirection {
+    positive,
+    negative,
+    neutral
+}
+
+enum ContradictionType {
+    fact,           -- un evento dice que X ocurrió, el otro que no
+    actor,          -- discrepan sobre QUIÉN lo hizo
+    attribute,      -- discrepan en cantidades, fechas, detalles
+    narrative       -- mismos hechos, encuadres opuestos
+}
+
+enum VerificationStatus {
+    pending,        -- detectado automáticamente, no verificado
+    confirmed,      -- usuarios corroboran la contradicción
+    disputed,       -- usuarios discrepan sobre si existe contradicción
+    resolved        -- consenso alcanzado, ya no es controversial
+}
+
+enum ConsensusStatus {
+    uncontroversial,    -- sin contradicciones
+    emerging,           -- 1-2 contradicciones sin verificar
+    contested,          -- 3+ contradicciones o votos divididos
+    hotly_disputed,     -- alta tensión + desacuerdo entre verificadores
+    resolved            -- contradicciones resueltas
+}
+
+enum EvidencePosition {
+    supports,
+    contradicts,
+    neutral
+}
+
+-- =============================================================================
+-- ENTIDAD DE AUDITORÍA
+-- =============================================================================
+
+entity VerificationVote {
+    id: String
+    user: Usuario
+    contradiction: Contradice
+    vote: VoteType              -- agree | disagree | uncertain
+    confidence: Float           -- 0.0-1.0
+    comment: String?
+    timestamp: Timestamp
+}
+
+enum VoteType {
+    agree,          -- la contradicción es válida
+    disagree,       -- no hay contradicción real
+    uncertain       -- necesita más evidencia
+}
+
+entity AuditLog {
+    id: String
+    timestamp: Timestamp
+    user: Usuario?              -- null si es sistema
+    entity_type: String         -- "Evento" | "Contradice" | "Evidencia"
+    entity_id: String
+    action: AuditAction
+    field: String?
+    old_value: String?
+    new_value: String?
+    reason: String?
+}
+
+enum AuditAction {
+    CREATE,
+    UPDATE,
+    DELETE,
+    VERIFY,
+    CHALLENGE
+}
+
+-- =============================================================================
+-- REGLAS DE DETECCIÓN AUTOMÁTICA (ESTADO ACTUAL)
+-- =============================================================================
+
+-- Regla 1: Detección automática de contradicciones vía LLM
+rule DetectarContradiccionAutomatica {
+    when: SystemRunsResolver()
+
+    -- Busca pares de eventos del mismo tema desde fuentes diferentes
+    let candidates = Evento.all()
+        .filter(e1 => exists(e2: Evento where
+            e2.source != e1.source and
+            events_are_about_same_topic(e1, e2)
+        ))
+
+    for (e1, e2) in candidates:
+        let llm_analysis = call_resolver_llm(e1, e2)
+
+        if llm_analysis.relation = "CONTRADICE":
+            ensures: Contradice.created(
+                from: e1,
+                to: e2,
+                tension_score: llm_analysis.tension_score,
+                contradiction_type: llm_analysis.contradiction_type,
+                analysis: llm_analysis.analysis,
+                detected_by: "gemma3:latest",
+                detected_at: now,
+                verification_status: pending,
+                consensus_score: 0.0,
+                vote_agree_count: 0,
+                vote_disagree_count: 0,
+                vote_uncertain_count: 0
+            )
+
+        if llm_analysis.relation = "COMPLEMENTA":
+            ensures: Complementa.created(
+                from: e1,
+                to: e2,
+                detected_by: "gemma3:latest",
+                detected_at: now
+            )
+}
+
+-- Regla 2: Actualizar estado de disputa de un evento
+rule ActualizarEstadoDisputa {
+    when: evento: Evento
+
+    let contradicciones = Contradice.all()
+        .filter(c => c.from = evento or c.to = evento)
+        .filter(c => c.verification_status != resolved)
+
+    ensures: evento.is_disputed = (contradicciones.count > 0)
+    ensures: evento.dispute_count = contradicciones.count
+    ensures: evento.consensus_status = compute_consensus_status(contradicciones)
+}
+
+-- =============================================================================
+-- REGLAS DE VERIFICACIÓN COLABORATIVA (NUEVO)
+-- =============================================================================
+
+-- Regla 3: Usuario vota sobre una contradicción
+rule UsuarioVotaContradiccion {
+    when: VoteSubmitted(
+        user: Usuario,
+        contradiction: Contradice,
+        vote_type: VoteType,
+        confidence: Float,
+        comment: String?
+    )
+
+    requires: user.reputation >= 0.3  -- solo usuarios con reputación mínima
+    requires: confidence >= 0.0 and confidence <= 1.0
+
+    ensures: VerificationVote.created(
+        user: user,
+        contradiction: contradiction,
+        vote: vote_type,
+        confidence: confidence,
+        comment: comment,
+        timestamp: now
+    )
+
+    ensures:
+        if vote_type = agree:
+            contradiction.vote_agree_count += 1
+            if user not in contradiction.verified_by:
+                contradiction.verified_by.add(user)
+        elif vote_type = disagree:
+            contradiction.vote_disagree_count += 1
+            if user not in contradiction.challenged_by:
+                contradiction.challenged_by.add(user)
+        else:
+            contradiction.vote_uncertain_count += 1
+
+    -- Recalcular consensus_score ponderado
+    ensures: contradiction.consensus_score = compute_weighted_consensus(
+        contradiction.verified_by,
+        contradiction.challenged_by
+    )
+
+    -- Auditar la acción
+    ensures: AuditLog.created(
+        timestamp: now,
+        user: user,
+        entity_type: "Contradice",
+        entity_id: contradiction.id,
+        action: VERIFY,
+        new_value: vote_type.toString(),
+        reason: comment
+    )
+}
+
+-- Regla 4: Actualizar estado de verificación basado en consenso
+rule ActualizarEstadoVerificacion {
+    when: contradiction: Contradice
+    requires: contradiction.vote_agree_count + contradiction.vote_disagree_count >= 3
+
+    let agree_ratio = contradiction.vote_agree_count /
+                      (contradiction.vote_agree_count + contradiction.vote_disagree_count)
+
+    ensures:
+        if agree_ratio >= 0.75:
+            contradiction.verification_status = confirmed
+        elif agree_ratio <= 0.25:
+            contradiction.verification_status = resolved  -- falsa alarma
+        else:
+            contradiction.verification_status = disputed  -- desacuerdo
+}
+
+-- Regla 5: Usuario aporta evidencia a un evento
+rule UsuarioAportaEvidencia {
+    when: EvidenceSubmitted(
+        user: Usuario,
+        event: Evento,
+        quote: String,
+        source_url: String,
+        position: EvidencePosition,
+        relevance: Float
+    )
+
+    requires: user.reputation >= 0.2
+    requires: relevance >= 0.0 and relevance <= 1.0
+
+    ensures: Evidencia.created(
+        quote: quote,
+        source_url: source_url,
+        timestamp: now,
+        relevance_score: relevance,
+        found_by: user
+    )
+
+    ensures: Respalda.created(
+        from: new_evidencia,
+        to: event,
+        supports_or_contradicts: position,
+        confidence: relevance
+    )
+
+    ensures: AuditLog.created(
+        timestamp: now,
+        user: user,
+        entity_type: "Evidencia",
+        entity_id: new_evidencia.id,
+        action: CREATE,
+        reason: "User-contributed evidence"
+    )
+
+    -- Incrementar contador de verificaciones del usuario
+    ensures: user.verified_count += 1
+}
+
+-- Regla 6: Ajustar tension_score manualmente
+rule UsuarioAjustaTension {
+    when: TensionAdjusted(
+        user: Usuario,
+        contradiction: Contradice,
+        new_tension: Float,
+        reason: String
+    )
+
+    requires: user.reputation >= 0.5  -- solo usuarios experimentados
+    requires: new_tension >= 0.0 and new_tension <= 1.0
+
+    let old_tension = contradiction.tension_score
+
+    ensures: contradiction.tension_score = new_tension
+    ensures: contradiction.detected_by = "user:" + user.id
+
+    ensures: AuditLog.created(
+        timestamp: now,
+        user: user,
+        entity_type: "Contradice",
+        entity_id: contradiction.id,
+        action: UPDATE,
+        field: "tension_score",
+        old_value: old_tension.toString(),
+        new_value: new_tension.toString(),
+        reason: reason
+    )
+}
+
+-- Regla 7: Marcar contradicción como resuelta
+rule ResolverContradiccion {
+    when: ContradictionResolved(
+        user: Usuario,
+        contradiction: Contradice,
+        resolution_note: String
+    )
+
+    requires: user.reputation >= 0.6  -- solo moderadores/expertos
+    requires: contradiction.verification_status = confirmed or
+              contradiction.verification_status = disputed
+
+    ensures: contradiction.verification_status = resolved
+
+    ensures: AuditLog.created(
+        timestamp: now,
+        user: user,
+        entity_type: "Contradice",
+        entity_id: contradiction.id,
+        action: UPDATE,
+        field: "verification_status",
+        old_value: contradiction.verification_status.toString(),
+        new_value: "resolved",
+        reason: resolution_note
+    )
+
+    -- Actualizar consenso de los eventos involucrados
+    ensures: trigger ActualizarEstadoDisputa(contradiction.from)
+    ensures: trigger ActualizarEstadoDisputa(contradiction.to)
+}
+
+-- =============================================================================
+-- REGLAS DE REPUTACIÓN (NUEVO)
+-- =============================================================================
+
+-- Regla 8: Ajustar reputación basada en consenso
+rule AjustarReputacionPorConsenso {
+    when: contradiction: Contradice
+    requires: contradiction.verification_status = confirmed or
+              contradiction.verification_status = resolved
+
+    -- Los que votaron de acuerdo con el consenso suben reputación
+    for vote in VerificationVote.all().filter(v => v.contradiction = contradiction):
+        let is_correct = (
+            (vote.vote = agree and contradiction.verification_status = confirmed) or
+            (vote.vote = disagree and contradiction.verification_status = resolved)
+        )
+
+        if is_correct:
+            ensures: vote.user.reputation = min(1.0, vote.user.reputation + 0.02)
+        else:
+            ensures: vote.user.reputation = max(0.0, vote.user.reputation - 0.01)
+}
+
+-- =============================================================================
+-- FUNCIONES AUXILIARES (PSEUDO-CÓDIGO)
+-- =============================================================================
+
+-- Computa el estado de consenso de un evento basado en sus contradicciones
+function compute_consensus_status(contradicciones: List<Contradice>) -> ConsensusStatus {
+    if contradicciones.count = 0:
+        return uncontroversial
+
+    let high_tension = contradicciones.filter(c => c.tension_score > 0.7)
+    let verified = contradicciones.filter(c => c.verification_status = confirmed)
+    let disputed = contradicciones.filter(c => c.verification_status = disputed)
+
+    if disputed.count > 0:
+        return hotly_disputed
+    if verified.count >= 3 or high_tension.count >= 2:
+        return contested
+    if verified.count > 0:
+        return emerging
+    if contradicciones.all(c => c.verification_status = resolved):
+        return resolved
+
+    return emerging
+}
+
+-- Calcula consenso ponderado por reputación de usuarios
+function compute_weighted_consensus(
+    verified_by: Set<Usuario>,
+    challenged_by: Set<Usuario>
+) -> Float {
+    let total_agree = verified_by.map(u => u.reputation).sum()
+    let total_disagree = challenged_by.map(u => u.reputation).sum()
+    let total_votes = total_agree + total_disagree
+
+    if total_votes = 0:
+        return 0.5  -- neutral si no hay votos
+
+    return total_agree / total_votes
+}
+
+-- =============================================================================
+-- INVARIANTES
+-- =============================================================================
+
+invariant ConsensoValido {
+    for all c: Contradice:
+        c.consensus_score >= 0.0 and c.consensus_score <= 1.0
+}
+
+invariant ReputacionValida {
+    for all u: Usuario:
+        u.reputation >= 0.0 and u.reputation <= 1.0
+}
+
+invariant TensionScoreValido {
+    for all c: Contradice:
+        c.tension_score >= 0.0 and c.tension_score <= 1.0
+}
+
+invariant NoAutoContradiccion {
+    for all c: Contradice:
+        c.from.id != c.to.id
+}
+
+invariant UsuarioNoVotaDosVeces {
+    for all c: Contradice:
+        for all v1, v2 in VerificationVote.all()
+            .filter(vote => vote.contradiction = c):
+            if v1.user = v2.user:
+                v1.id = v2.id  -- mismo voto
+}
+
+-- =============================================================================
+-- CONFIGURACIÓN
+-- =============================================================================
+
+config {
+    min_reputation_to_vote: 0.3
+    min_reputation_to_adjust_tension: 0.5
+    min_reputation_to_resolve: 0.6
+
+    consensus_threshold_confirmed: 0.75
+    consensus_threshold_resolved: 0.25
+
+    min_votes_for_consensus: 3
+
+    reputation_gain_correct: 0.02
+    reputation_loss_incorrect: 0.01
+
+    initial_user_reputation: 0.5
+}
